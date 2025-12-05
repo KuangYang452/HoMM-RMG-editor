@@ -738,7 +738,7 @@ const MapGraph: React.FC<MapGraphProps> = ({ data, onSelectNode, onSelectLink, s
             <div className="font-bold text-slate-400 mb-2 uppercase tracking-wider">图例说明</div>
             <div className="flex items-center gap-2 mb-1">
                 <span className="w-3 h-3 rounded-full bg-[#f59e0b] border border-slate-500 shadow-[0_0_4px_#f59e0b]"></span>
-                <span className="text-amber-500">高价值区域 (>2M)</span>
+                <span className="text-amber-500">高价值区域 ({'>'}2M)</span>
             </div>
             <div className="flex items-center gap-2 mb-1">
                 <span className="w-3 h-3 rounded-full bg-[#1e293b] border border-slate-500"></span>
@@ -747,7 +747,7 @@ const MapGraph: React.FC<MapGraphProps> = ({ data, onSelectNode, onSelectLink, s
             <div className="h-px bg-slate-700 my-2"></div>
             <div className="flex items-center gap-2 mb-1">
                 <span className="w-8 h-4 rounded bg-[#7f1d1d] flex items-center justify-center text-[8px] font-bold text-white">40k</span>
-                <span className="text-red-400">强力守卫 (>=40k)</span>
+                <span className="text-red-400">强力守卫 ({'>'}=40k)</span>
             </div>
             <div className="flex items-center gap-2 mb-1">
                 <span className="w-8 h-4 rounded bg-[#14532d] flex items-center justify-center text-[8px] font-bold text-white">2k</span>
