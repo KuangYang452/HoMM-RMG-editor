@@ -1,7 +1,6 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
-import './index.css'; // 引入 Tailwind 样式
 
 const rootElement = document.getElementById('root');
 if (!rootElement) {
