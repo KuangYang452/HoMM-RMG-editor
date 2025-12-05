@@ -1,23 +1,54 @@
 {
-  "name": "魔法门英雄无敌：上古纪元-rmg-编辑器",
-  "private": true,
-  "version": "0.0.0",
-  "type": "module",
+  "name": "homm-oe-rmg-editor",
+  "version": "1.0.0",
+  "description": "Heroes of Might and Magic: Olden Era RMG Editor",
+  "main": "dist-electron/main.js",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
-    "preview": "vite preview"
+    "build": "tsc && vite build && electron-builder",
+    "preview": "vite preview",
+    "start": "electron .",
+    "typecheck": "tsc --noEmit",
+    "compile-electron": "tsc -p electron/tsconfig.json"
   },
   "dependencies": {
-    "react": "^19.2.0",
-    "react-dom": "^19.2.0",
-    "lucide-react": "^0.555.0",
-    "d3": "^7.9.0"
+    "d3": "^7.9.0",
+    "lucide-react": "^0.344.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
   },
   "devDependencies": {
-    "@types/node": "^22.14.0",
-    "@vitejs/plugin-react": "^5.0.0",
-    "typescript": "~5.8.2",
-    "vite": "^6.2.0"
+    "@types/d3": "^7.4.3",
+    "@types/node": "^20.11.24",
+    "@types/react": "^18.2.61",
+    "@types/react-dom": "^18.2.19",
+    "@vitejs/plugin-react": "^4.2.1",
+    "electron": "^29.1.0",
+    "electron-builder": "^24.13.3",
+    "typescript": "^5.3.3",
+    "vite": "^5.1.4"
+  },
+  "build": {
+    "appId": "com.homm.rmgeditor",
+    "productName": "RMG Editor - Olden Era",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "dist-electron/**/*"
+    ],
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ]
+    },
+    "mac": {
+      "target": "dmg"
+    },
+    "linux": {
+      "target": "AppImage"
+    }
   }
 }

@@ -80,6 +80,14 @@ export interface GraphNode extends d3.SimulationNodeDatum {
     data: RmgZone;
     type: 'spawn' | 'city' | 'empty';
     player?: string; // e.g., Player1
+    // D3 Simulation properties
+    x?: number;
+    y?: number;
+    vx?: number;
+    vy?: number;
+    fx?: number | null;
+    fy?: number | null;
+    index?: number;
 }
 
 export interface GraphLink extends d3.SimulationLinkDatum<GraphNode> {
