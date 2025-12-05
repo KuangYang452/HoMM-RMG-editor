@@ -23,18 +23,18 @@ const PORTAL_COLORS = [
     "#fbbf24", // Amber
 ];
 
-// 8 Player Colors
+// 8 Player Colors (Brighter for Text/Icon on Dark Background)
 const getPlayerColor = (player: string | undefined) => {
     switch (player) {
-        case 'Player1': return '#dc2626'; // Red
-        case 'Player2': return '#2563eb'; // Blue
-        case 'Player3': return '#16a34a'; // Green
-        case 'Player4': return '#ea580c'; // Orange
-        case 'Player5': return '#9333ea'; // Purple
-        case 'Player6': return '#0891b2'; // Cyan
-        case 'Player7': return '#db2777'; // Pink
-        case 'Player8': return '#475569'; // Slate/Black
-        default: return '#1e293b';
+        case 'Player1': return '#ef4444'; // Red-500
+        case 'Player2': return '#3b82f6'; // Blue-500
+        case 'Player3': return '#22c55e'; // Green-500
+        case 'Player4': return '#f97316'; // Orange-500
+        case 'Player5': return '#a855f7'; // Purple-500
+        case 'Player6': return '#22d3ee'; // Cyan-400
+        case 'Player7': return '#ec4899'; // Pink-500
+        case 'Player8': return '#cbd5e1'; // Slate-300
+        default: return '#94a3b8'; // Slate-400
     }
 };
 
@@ -154,6 +154,11 @@ const MapGraph: React.FC<MapGraphProps> = ({ data, onSelectNode, onSelectLink, s
           player = spawnObj.spawn;
         } else if (zone.mainObjects.find(obj => obj.type === 'City')) {
           type = 'city';
+          // Check for owner in City
+          const cityObj = zone.mainObjects.find(obj => obj.type === 'City');
+          if (cityObj && cityObj.owner) {
+              player = cityObj.owner;
+          }
         }
       }
 
@@ -417,7 +422,7 @@ const MapGraph: React.FC<MapGraphProps> = ({ data, onSelectNode, onSelectLink, s
     node.append("circle")
       .attr("id", d => `node-circle-${d.id}`)
       .attr("r", d => getNodeRadius(d.data.size || 1)) 
-      .attr("fill", d => d.type === 'spawn' ? getPlayerColor(d.player) : '#1e293b')
+      .attr("fill", "#1e293b") // Neutral background for all
       .attr("stroke", d => {
           const value = d.data.guardedContentValue || 0;
           if (value > 2000000) return "#f59e0b"; 
@@ -433,20 +438,36 @@ const MapGraph: React.FC<MapGraphProps> = ({ data, onSelectNode, onSelectLink, s
         const r = getNodeRadius(d.data.size || 1);
         const objects = d.data.mainObjects || [];
         const displayObjs = objects.filter(o => o.type === 'City' || o.type === 'Spawn');
+
+        const renderObj = (obj: any, x: number, y: number, fontSize: number) => {
+             let txt = "⌂";
+             let color = "#e2e8f0";
+             
+             if (obj.type === 'Spawn') {
+                 txt = obj.spawn?.replace('Player', 'P') || 'S';
+                 color = getPlayerColor(obj.spawn);
+             } else if (obj.type === 'City') {
+                 txt = "⌂";
+                 color = obj.owner ? getPlayerColor(obj.owner) : "#e2e8f0";
+             }
+
+             el.append("text")
+                .text(txt)
+                .attr("x", x)
+                .attr("y", y)
+                .attr("text-anchor", "middle")
+                .attr("dy", "0.35em")
+                .attr("fill", color)
+                .attr("font-size", `${fontSize}px`)
+                .attr("font-weight", "bold")
+                .style("pointer-events", "none");
+        };
         
         if (displayObjs.length === 0) {
             el.append("text").text("⌂").attr("text-anchor", "middle").attr("dy", "0.35em")
                 .attr("fill", "#64748b").attr("font-size", `${r}px`).style("pointer-events", "none"); 
         } else if (displayObjs.length === 1) {
-             const obj = displayObjs[0];
-             let txt = "⌂";
-             let color = "#e2e8f0";
-             if (obj.type === 'Spawn') {
-                 txt = obj.spawn?.replace('Player', 'P') || 'S';
-                 color = "#fff";
-             }
-             el.append("text").text(txt).attr("text-anchor", "middle").attr("dy", "0.35em")
-                .attr("fill", color).attr("font-size", `${r}px`).attr("font-weight", "bold").style("pointer-events", "none"); 
+             renderObj(displayObjs[0], 0, 0, r);
         } else {
             const count = displayObjs.length;
             const angleStep = (2 * Math.PI) / count;
@@ -456,14 +477,7 @@ const MapGraph: React.FC<MapGraphProps> = ({ data, onSelectNode, onSelectLink, s
                 const angle = i * angleStep - Math.PI / 2; 
                 const ox = Math.cos(angle) * subR;
                 const oy = Math.sin(angle) * subR;
-                let txt = "⌂";
-                let color = "#e2e8f0";
-                if (obj.type === 'Spawn') {
-                    txt = obj.spawn?.replace('Player', 'P') || 'S';
-                    color = "#ef4444"; 
-                }
-                el.append("text").text(txt).attr("x", ox).attr("y", oy).attr("text-anchor", "middle").attr("dy", "0.35em")
-                    .attr("fill", color).attr("font-size", `${iconSize}px`).attr("font-weight", "bold").style("pointer-events", "none"); 
+                renderObj(obj, ox, oy, iconSize);
             });
         }
     });
@@ -672,13 +686,7 @@ const MapGraph: React.FC<MapGraphProps> = ({ data, onSelectNode, onSelectLink, s
              const group = d3.select(this);
              
              // Handle Lines (Tails) -> Now Paths
-             group.selectAll("path.tail-path") // Need to target the specific class or just path without head class? 
-             // Currently drawArrowWithTail uses "path" for both. Let's rely on order or update drawArrowWithTail to add class if needed.
-             // Actually, the previous selection logic selected ALL paths.
-             // The Head is also a path. 
-             // Let's refine the selector in drawArrowWithTail if we want specific styling, but here we iterate all paths in the group.
-             // The tail is stroke-only (fill none). The head is fill + stroke.
-             
+             // Currently drawArrowWithTail uses "path" for both.
              group.selectAll("path")
                 .attr("stroke", function() {
                      // Check if it's the head or tail based on fill?
