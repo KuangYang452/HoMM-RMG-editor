@@ -19,7 +19,7 @@ const App: React.FC = () => {
   
   // Modal State
   const [isGlobalSettingsOpen, setIsGlobalSettingsOpen] = useState(false);
-  const [globalSettingsTab, setGlobalSettingsTab] = useState<'rules' | 'layouts' | 'variants' | 'content'>('rules');
+  const [globalSettingsTab, setGlobalSettingsTab] = useState<'rules' | 'layouts' | 'variants' | 'content' | 'raw'>('rules');
 
   // Shared Ref for the Minimap SVG element
   const minimapRef = useRef<SVGSVGElement>(null);
@@ -36,7 +36,7 @@ const App: React.FC = () => {
     });
   }, [data, selectionType, selectedId, fileName]);
 
-  const handleOpenGlobalSettings = (tab: 'rules' | 'layouts' | 'variants' | 'content' = 'rules') => {
+  const handleOpenGlobalSettings = (tab: 'rules' | 'layouts' | 'variants' | 'content' | 'raw' = 'rules') => {
       setGlobalSettingsTab(tab);
       setIsGlobalSettingsOpen(true);
   };

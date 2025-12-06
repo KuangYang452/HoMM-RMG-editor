@@ -738,7 +738,7 @@ const PropertyEditor: React.FC<PropertyEditorProps> = ({
                     
                     <div className="bg-slate-950 rounded border border-slate-800 p-2">
                         <div className="grid grid-cols-4 gap-2">
-                            {visibleMO.map((obj, idx) => renderMainObjectItem(obj, idx))}
+                            {visibleMO.map((obj: any, idx: number) => renderMainObjectItem(obj, idx))}
                             
                             {/* Logic for the 8th slot: Either "Add" or "More" */}
                             {showMoreMO ? (
