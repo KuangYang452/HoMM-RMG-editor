@@ -1,5 +1,5 @@
 
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useMemo } from 'react';
 import * as d3 from 'd3';
 import { RmgFile, GraphNode, GraphLink } from '../types';
 
@@ -8,6 +8,7 @@ interface MapGraphProps {
   onSelectNode: (id: string | null) => void;
   onSelectLink: (id: string | null) => void;
   selectedId: string | null;
+  minimapRef: React.RefObject<SVGSVGElement | null>;
 }
 
 // 8 Distinct Colors for Portals
@@ -50,23 +51,23 @@ interface ProcessedLink extends GraphLink {
     linkCount: number;
 }
 
-const MapGraph: React.FC<MapGraphProps> = ({ data, onSelectNode, onSelectLink, selectedId }) => {
+const MapGraph: React.FC<MapGraphProps> = ({ data, onSelectNode, onSelectLink, selectedId, minimapRef }) => {
   const svgRef = useRef<SVGSVGElement>(null);
-  const minimapRef = useRef<SVGSVGElement>(null); // Ref for Minimap SVG
   const containerRef = useRef<HTMLDivElement>(null);
   
   const onSelectNodeRef = useRef(onSelectNode);
   const onSelectLinkRef = useRef(onSelectLink);
 
+  // Refs for Minimap D3 selections (so main loop can update them without re-binding)
+  const miniNodesRef = useRef<d3.Selection<SVGCircleElement, GraphNode, SVGGElement, unknown> | null>(null);
+  const miniLinksRef = useRef<d3.Selection<SVGLineElement, ProcessedLink, SVGGElement, unknown> | null>(null);
+  const miniViewportRef = useRef<d3.Selection<SVGRectElement, unknown, null, undefined> | null>(null);
+  const minimapScaleRef = useRef<number>(1);
+
   // Dynamic World Size Calculation
   // User Requirement: 10 times the map template's x, y values
   const worldWidth = Math.max((data.sizeX || 64) * 10, 500); // Minimum safety width
   const worldHeight = Math.max((data.sizeZ || 64) * 10, 500);
-
-  // Minimap UI Size (Adaptive Height)
-  const MINIMAP_UI_WIDTH = 280;
-  const minimapScale = MINIMAP_UI_WIDTH / worldWidth;
-  const minimapHeight = worldHeight * minimapScale;
 
   useEffect(() => {
     onSelectNodeRef.current = onSelectNode;
@@ -83,35 +84,7 @@ const MapGraph: React.FC<MapGraphProps> = ({ data, onSelectNode, onSelectLink, s
   // Helper to calculate radius based on Area (Sqrt of size)
   const getNodeRadius = (size: number) => 35 * Math.sqrt(size || 1);
 
-  // Helper to generate path for links
-  const getLinkPath = (src: {x:number, y:number}, tgt: {x:number, y:number}, link: ProcessedLink, gap: number) => {
-      const count = link.linkCount;
-      const index = link.linkIndex;
-      
-      const dx = tgt.x - src.x;
-      const dy = tgt.y - src.y;
-      const len = Math.sqrt(dx * dx + dy * dy);
-      if (len === 0) return "";
-
-      const nx = -dy / len;
-      const ny = dx / len;
-
-      const offset = (index - (count - 1) / 2) * gap;
-
-      const x1 = src.x + nx * offset;
-      const y1 = src.y + ny * offset;
-      const x2 = tgt.x + nx * offset;
-      const y2 = tgt.y + ny * offset;
-
-      if (link.data.road || link.data.connectionType === 'Proximity') {
-          return `M ${x1} ${y1} L ${x2} ${y2}`;
-      } else {
-           // Using simple quadratic curve
-           return `M ${x1} ${y1} Q ${(x1+x2)/2 + nx*20} ${(y1+y2)/2 + ny*20} ${x2} ${y2}`; 
-      }
-  };
-
-  // Helper for wavy line (Restored)
+  // Helper for wavy line
   const getComplexLinkPath = (src: {x:number, y:number}, tgt: {x:number, y:number}, link: ProcessedLink, gap: number) => {
       const count = link.linkCount;
       const index = link.linkIndex;
@@ -152,97 +125,213 @@ const MapGraph: React.FC<MapGraphProps> = ({ data, onSelectNode, onSelectLink, s
       }
   }
 
-
-  useEffect(() => {
-    if (!data || !data.variants || data.variants.length === 0 || !svgRef.current || !containerRef.current || !minimapRef.current) return;
-
-    const variant = data.variants[0];
-    const width = containerRef.current.clientWidth;
-    const height = containerRef.current.clientHeight;
-
-    // --- Prepare Nodes ---
-    const nodes: GraphNode[] = variant.zones.map(zone => {
-      let type: 'spawn' | 'city' | 'empty' = 'empty';
-      let player: string | undefined = undefined;
-
-      if (zone.mainObjects) {
-        const spawnObj = zone.mainObjects.find(obj => obj.type === 'Spawn');
-        if (spawnObj) {
-          type = 'spawn';
-          player = spawnObj.spawn;
-        } else if (zone.mainObjects.find(obj => obj.type === 'City')) {
-          type = 'city';
-          const cityObj = zone.mainObjects.find(obj => obj.type === 'City');
-          if (cityObj && cityObj.owner) {
-              player = cityObj.owner;
-          }
-        }
+  // --- 1. Prepare Data (Stable across renders) ---
+  const { nodes, physicalLinks, portalLinks } = useMemo(() => {
+      if (!data || !data.variants || data.variants.length === 0) {
+          return { nodes: [], physicalLinks: [], portalLinks: [] };
       }
 
-      const savedPos = nodePositions.current.get(zone.name);
+      const variant = data.variants[0];
       
-      // Initial Position Logic:
-      // Must ensure they start WITHIN the new world boundary
-      let initialX = savedPos?.x ?? (worldWidth/2 + (Math.random() - 0.5) * (worldWidth * 0.2));
-      let initialY = savedPos?.y ?? (worldHeight/2 + (Math.random() - 0.5) * (worldHeight * 0.2));
+      // Nodes
+      const processedNodes: GraphNode[] = variant.zones.map(zone => {
+          let type: 'spawn' | 'city' | 'empty' = 'empty';
+          let player: string | undefined = undefined;
+
+          if (zone.mainObjects) {
+            const spawnObj = zone.mainObjects.find(obj => obj.type === 'Spawn');
+            if (spawnObj) {
+              type = 'spawn';
+              player = spawnObj.spawn;
+            } else if (zone.mainObjects.find(obj => obj.type === 'City')) {
+              type = 'city';
+              const cityObj = zone.mainObjects.find(obj => obj.type === 'City');
+              if (cityObj && cityObj.owner) {
+                  player = cityObj.owner;
+              }
+            }
+          }
+
+          const savedPos = nodePositions.current.get(zone.name);
+          let initialX = savedPos?.x ?? (worldWidth/2 + (Math.random() - 0.5) * (worldWidth * 0.2));
+          let initialY = savedPos?.y ?? (worldHeight/2 + (Math.random() - 0.5) * (worldHeight * 0.2));
+          initialX = Math.max(50, Math.min(worldWidth - 50, initialX));
+          initialY = Math.max(50, Math.min(worldHeight - 50, initialY));
+
+          return {
+            id: zone.name,
+            data: zone,
+            type,
+            player,
+            x: initialX,
+            y: initialY,
+            fx: savedPos?.fx,
+            fy: savedPos?.fy
+          };
+      });
+
+      const nodeMap = new Map(processedNodes.map(n => [n.id, n]));
+
+      // Links
+      const linkCounts = new Map<string, number>();
+      const linkIndices = new Map<string, number>();
+      const allLinksRaw = variant.connections.filter(conn => nodeMap.has(conn.from) && nodeMap.has(conn.to));
       
-      // Clamp to boundary with padding
-      initialX = Math.max(50, Math.min(worldWidth - 50, initialX));
-      initialY = Math.max(50, Math.min(worldHeight - 50, initialY));
+      allLinksRaw.forEach(conn => {
+          const ids = [conn.from, conn.to].sort();
+          const key = `${ids[0]}-${ids[1]}`; 
+          linkCounts.set(key, (linkCounts.get(key) || 0) + 1);
+      });
 
-      return {
-        id: zone.name,
-        data: zone,
-        type,
-        player,
-        x: initialX,
-        y: initialY,
-        fx: savedPos?.fx,
-        fy: savedPos?.fy
-      };
-    });
+      const pLinks: ProcessedLink[] = [];
+      const ptLinks: ProcessedLink[] = [];
 
-    const nodeMap = new Map(nodes.map(n => [n.id, n]));
+      allLinksRaw.forEach(conn => {
+          const ids = [conn.from, conn.to].sort();
+          const key = `${ids[0]}-${ids[1]}`; 
+          const count = linkCounts.get(key) || 1;
+          const index = linkIndices.get(key) || 0;
+          linkIndices.set(key, index + 1);
 
-    // --- Prepare Links ---
-    const nodeDegree = new Map<string, number>();
-    const linkCounts = new Map<string, number>();
-    const allLinksRaw = variant.connections.filter(conn => nodeMap.has(conn.from) && nodeMap.has(conn.to));
-    allLinksRaw.forEach(conn => {
-        // Calculate Node Degree for gravity logic
-        nodeDegree.set(conn.from, (nodeDegree.get(conn.from) || 0) + 1);
-        nodeDegree.set(conn.to, (nodeDegree.get(conn.to) || 0) + 1);
+          const linkObj = {
+              source: nodeMap.get(conn.from)!, // We know it exists from filter
+              target: nodeMap.get(conn.to)!,
+              data: conn,
+              linkIndex: index,
+              linkCount: count
+          };
 
-        const ids = [conn.from, conn.to].sort();
-        const key = `${ids[0]}-${ids[1]}`; 
-        linkCounts.set(key, (linkCounts.get(key) || 0) + 1);
-    });
-    const linkIndices = new Map<string, number>(); 
-    const physicalLinks: ProcessedLink[] = [];
-    const portalLinks: ProcessedLink[] = [];
+          if (conn.connectionType === 'Portal') {
+              ptLinks.push(linkObj as ProcessedLink);
+          } else {
+              pLinks.push(linkObj as ProcessedLink);
+          }
+      });
 
-    allLinksRaw.forEach(conn => {
-        const ids = [conn.from, conn.to].sort();
-        const key = `${ids[0]}-${ids[1]}`; 
-        const count = linkCounts.get(key) || 1;
-        const index = linkIndices.get(key) || 0;
-        linkIndices.set(key, index + 1);
+      return { nodes: processedNodes, physicalLinks: pLinks, portalLinks: ptLinks };
 
-        const linkObj = {
-            source: conn.from, 
-            target: conn.to,
-            data: conn,
-            linkIndex: index,
-            linkCount: count
-        };
+  }, [data, worldWidth, worldHeight]);
 
-        if (conn.connectionType === 'Portal') {
-            const l = { ...linkObj, source: nodeMap.get(conn.from)!, target: nodeMap.get(conn.to)! };
-            portalLinks.push(l as ProcessedLink);
-        } else {
-            physicalLinks.push(linkObj as ProcessedLink);
-        }
-    });
+  // --- 2. Minimap Rendering Effect (Separate to handle re-mounting of ref) ---
+  useEffect(() => {
+      // Clean up previous refs if minimap is gone
+      if (!minimapRef.current) {
+          miniNodesRef.current = null;
+          miniLinksRef.current = null;
+          miniViewportRef.current = null;
+          return;
+      }
+
+      const minimapSvg = d3.select(minimapRef.current);
+      minimapSvg.selectAll("*").remove();
+
+      // Measure dimensions
+      const width = minimapRef.current.clientWidth || 300;
+      const height = minimapRef.current.clientHeight || 200;
+      
+      // Calculate Scale (Fit world into minimap container)
+      const scaleX = width / worldWidth;
+      const scaleY = height / worldHeight;
+      const scale = Math.min(scaleX, scaleY) * 0.9; // 90% fit to add padding
+      minimapScaleRef.current = scale;
+
+      // Center it
+      const offsetX = (width - worldWidth * scale) / 2;
+      const offsetY = (height - worldHeight * scale) / 2;
+      
+      const g = minimapSvg.append("g")
+          .attr("transform", `translate(${offsetX}, ${offsetY})`);
+
+      // Background
+      g.append("rect")
+          .attr("width", worldWidth * scale)
+          .attr("height", worldHeight * scale)
+          .attr("fill", "#1e293b")
+          .attr("stroke", "#475569")
+          .attr("stroke-width", 1);
+
+      // Links
+      const linksSel = g.append("g").selectAll("line")
+          .data(physicalLinks)
+          .join("line")
+          .attr("stroke", "#475569")
+          .attr("stroke-width", 0.5)
+          .attr("opacity", 0.6);
+      
+      // Nodes
+      const nodesSel = g.append("g").selectAll("circle")
+          .data(nodes)
+          .join("circle")
+          .attr("r", 2)
+          .attr("fill", d => {
+               if (d.type === 'spawn') return getPlayerColor(d.player);
+               if (d.data.guardedContentValue && d.data.guardedContentValue > 2000000) return "#f59e0b";
+               return "#94a3b8";
+          });
+
+      // Viewport Rect
+      const viewportSel = g.append("rect")
+          .attr("stroke", "#fbbf24")
+          .attr("stroke-width", 1.5)
+          .attr("fill", "transparent")
+          .style("cursor", "move");
+
+      // Save selections for Main Loop
+      miniLinksRef.current = linksSel as unknown as d3.Selection<SVGLineElement, ProcessedLink, SVGGElement, unknown>;
+      miniNodesRef.current = nodesSel as unknown as d3.Selection<SVGCircleElement, GraphNode, SVGGElement, unknown>;
+      miniViewportRef.current = viewportSel;
+
+      // Initialize Viewport Position immediately
+      const t = zoomTransform.current;
+      const containerW = containerRef.current?.clientWidth || 0;
+      const containerH = containerRef.current?.clientHeight || 0;
+      
+      if (t.k) {
+          const vx = -t.x / t.k;
+          const vy = -t.y / t.k;
+          const vw = containerW / t.k;
+          const vh = containerH / t.k;
+          viewportSel
+              .attr("x", vx * scale)
+              .attr("y", vy * scale)
+              .attr("width", vw * scale)
+              .attr("height", vh * scale);
+      }
+
+      // Click to Pan
+      minimapSvg.on("click", (event) => {
+          if (!svgRef.current) return;
+          const [mx, my] = d3.pointer(event, g.node());
+          
+          const wx = mx / scale;
+          const wy = my / scale;
+          
+          const currentK = zoomTransform.current.k || 1;
+          const mainW = containerRef.current?.clientWidth || 0;
+          const mainH = containerRef.current?.clientHeight || 0;
+
+          const tx = mainW/2 - wx * currentK;
+          const ty = mainH/2 - wy * currentK;
+
+          const mainSvg = d3.select(svgRef.current);
+          const zoom = d3.zoom().scaleExtent([0.1, 10]); // Re-create zoom instance not ideal but needed to access transform
+          // Better: just trigger the transition on the main SVG which has zoom behavior attached
+          // We can't access the zoom behavior instance easily unless stored.
+          // However, dispatching a zoom transform is standard.
+          
+          mainSvg.transition().duration(750)
+             // @ts-ignore
+             .call(mainSvg.node().__zoomBehavior.transform, d3.zoomIdentity.translate(tx, ty).scale(currentK));
+      });
+
+  }, [minimapRef.current, nodes, physicalLinks, worldWidth, worldHeight]); // Re-run when Ref changes (mount/unmount) or data changes
+
+  // --- 3. Main Graph Simulation & Rendering ---
+  useEffect(() => {
+    if (!svgRef.current || !containerRef.current) return;
+
+    const width = containerRef.current.clientWidth;
+    const height = containerRef.current.clientHeight;
 
     // --- SVG Setup ---
     d3.select(svgRef.current).selectAll("*").remove();
@@ -250,236 +339,115 @@ const MapGraph: React.FC<MapGraphProps> = ({ data, onSelectNode, onSelectLink, s
       .attr("viewBox", [0, 0, width, height])
       .style("cursor", "grab");
 
-    const g = svg.append("g").attr("class", "graph-container");
-
-    // --- Dynamic World Boundary ---
-    g.append("rect")
-        .attr("x", 0)
-        .attr("y", 0)
-        .attr("width", worldWidth)
-        .attr("height", worldHeight)
-        .attr("fill", "#0f172a") 
-        .attr("stroke", "#334155")
-        .attr("stroke-width", 4)
-        .attr("stroke-dasharray", "20, 10")
-        .attr("rx", 20)
-        .style("pointer-events", "none");
-
-    // --- Minimap Setup ---
-    const minimapSvg = d3.select(minimapRef.current);
-    minimapSvg.selectAll("*").remove();
-    
-    minimapSvg.append("rect")
-        .attr("width", MINIMAP_UI_WIDTH)
-        .attr("height", minimapHeight)
-        .attr("fill", "#1e293b")
-        .attr("opacity", 0.9);
-
-    minimapSvg.append("rect")
-        .attr("x", 0)
-        .attr("y", 0)
-        .attr("width", MINIMAP_UI_WIDTH)
-        .attr("height", minimapHeight)
-        .attr("fill", "none")
-        .attr("stroke", "#475569")
-        .attr("stroke-width", 1);
-
-    const miniLinks = minimapSvg.append("g").selectAll("line")
-        .data(physicalLinks)
-        .join("line")
-        .attr("stroke", "#475569")
-        .attr("stroke-width", 0.5)
-        .attr("opacity", 0.6);
-
-    const miniNodes = minimapSvg.append("g").selectAll("circle")
-        .data(nodes)
-        .join("circle")
-        .attr("r", 2)
-        .attr("fill", d => {
-             if (d.type === 'spawn') return getPlayerColor(d.player);
-             if (d.data.guardedContentValue && d.data.guardedContentValue > 2000000) return "#f59e0b";
-             return "#94a3b8";
-        });
-
-    const miniViewport = minimapSvg.append("rect")
-        .attr("stroke", "#fbbf24")
-        .attr("stroke-width", 1.5)
-        .attr("fill", "transparent")
-        .style("cursor", "move");
-
-    // --- Zoom Logic ---
+    // Store zoom behavior on element for access in minimap
     const minScale = Math.max(width / worldWidth, height / worldHeight);
     const maxScale = Math.max(4, minScale * 2);
 
     const zoom = d3.zoom<SVGSVGElement, unknown>()
       .scaleExtent([minScale, maxScale])
-      .translateExtent([[0, 0], [worldWidth, worldHeight]]) // Strictly confine camera to world
+      .translateExtent([[0, 0], [worldWidth, worldHeight]])
       .on("zoom", (event) => {
         zoomTransform.current = event.transform;
         g.attr("transform", event.transform);
-        updateMinimapViewport(event.transform);
+        
+        // Update Minimap Viewport if it exists
+        if (miniViewportRef.current) {
+            const t = event.transform;
+            const scale = minimapScaleRef.current;
+            const vx = -t.x / t.k;
+            const vy = -t.y / t.k;
+            const vw = width / t.k;
+            const vh = height / t.k;
+            
+            miniViewportRef.current
+                .attr("x", vx * scale)
+                .attr("y", vy * scale)
+                .attr("width", vw * scale)
+                .attr("height", vh * scale);
+        }
       });
+    
+    // @ts-ignore
+    svg.node().__zoomBehavior = zoom;
+
+    const g = svg.append("g").attr("class", "graph-container");
+
+    // Boundary
+    g.append("rect")
+        .attr("x", 0).attr("y", 0)
+        .attr("width", worldWidth).attr("height", worldHeight)
+        .attr("fill", "#0f172a").attr("stroke", "#334155")
+        .attr("stroke-width", 4).attr("stroke-dasharray", "20, 10")
+        .attr("rx", 20).style("pointer-events", "none");
 
     svg.call(zoom);
 
-    // Initial positioning: Center the map
+    // Initial positioning
     const initialScale = minScale; 
     const initialTx = (width - worldWidth * initialScale) / 2;
     const initialTy = (height - worldHeight * initialScale) / 2;
-    const initialTransform = d3.zoomIdentity.translate(initialTx, initialTy).scale(initialScale);
-    
-    // Apply initial transform
-    svg.call(zoom.transform, initialTransform);
+    svg.call(zoom.transform, d3.zoomIdentity.translate(initialTx, initialTy).scale(initialScale));
 
-    function updateMinimapViewport(t: d3.ZoomTransform) {
-        const vx = -t.x / t.k;
-        const vy = -t.y / t.k;
-        const vw = width / t.k;
-        const vh = height / t.k;
-
-        miniViewport
-            .attr("x", vx * minimapScale)
-            .attr("y", vy * minimapScale)
-            .attr("width", vw * minimapScale)
-            .attr("height", vh * minimapScale);
-    }
-
-    minimapSvg.on("click", (event) => {
-        const [mx, my] = d3.pointer(event);
-        const wx = mx / minimapScale;
-        const wy = my / minimapScale;
-        
-        const currentK = zoomTransform.current.k;
-        // Keep current scale, just center
-        const tx = width/2 - wx * currentK;
-        const ty = height/2 - wy * currentK;
-
-        svg.transition().duration(750)
-           .call(zoom.transform, d3.zoomIdentity.translate(tx, ty).scale(currentK));
-    });
+    const handleBackgroundClick = () => {
+        onSelectNodeRef.current(null);
+        onSelectLinkRef.current(null);
+    };
+    svg.on("click", handleBackgroundClick);
 
     // --- Simulation ---
     const simulation = d3.forceSimulation<GraphNode>(nodes)
-      // 1. Shortened Link Distance: 110.
-      // This is generally smaller than the sum of collision radii (~130px for avg nodes).
-      // Result: Links are mostly in tension (attracting), preventing them from "pushing" nodes apart (repulsion).
       .force("link", d3.forceLink<GraphNode, ProcessedLink>(physicalLinks).id(d => d.id).distance(110)) 
-      
-      // High Repulsion to ensure space filling (Increased from -3000 to -5000 for stronger initial explosion)
       .force("charge", d3.forceManyBody().strength(-5000))
-      
-      // 2. Empty Area Attraction & Layout Gravity
-      // MODIFIED: Changed Logic for "Sides" to be negative strength (repulsion from center) instead of fixed coordinates.
       .force("x", d3.forceX<GraphNode>(worldWidth / 2).strength(d => {
-          // Priority: Layout "Center" targets the middle (Positive Strength = Attraction)
-          if (d.data.layout?.toLowerCase().includes('center')) {
-              return 0.25;
-          }
-          // Priority: Layout "Sides" targets the middle but with NEGATIVE strength (Repulsion)
-          // This gently pushes them away from the center towards the edges without snapping.
-          else if (d.data.layout?.toLowerCase().includes('sides')) {
-              return 0;
-          }
-          else {
-            return 0.05;
-          }
-
-          // Default: Weak pull to center for stability
-          const deg = nodeDegree.get(d.id) || 0;
-          return deg > 1 ? 0.05 : 0.002; 
+          if (d.data.layout?.toLowerCase().includes('center')) { return 0.25; }
+          else if (d.data.layout?.toLowerCase().includes('sides')) { return 0; }
+          else { return 0.1; }
       })) 
       .force("y", d3.forceY<GraphNode>(worldHeight / 2).strength(d => {
-          // Priority: Layout "Center" targets the middle (Positive Strength = Attraction)
-          if (d.data.layout?.toLowerCase().includes('center')) {
-              return 0.25;
-          }
-          // Priority: Layout "Sides" targets the middle but with NEGATIVE strength (Repulsion)
-          else if (d.data.layout?.toLowerCase().includes('sides')) {
-              return 0;
-          }
-          else {
-            return 0.05
-          }
-
-          const deg = nodeDegree.get(d.id) || 0;
-          return deg > 1 ? 0.05 : 0.002;
+          if (d.data.layout?.toLowerCase().includes('center')) { return 0.25; }
+          else if (d.data.layout?.toLowerCase().includes('sides')) { return 0; }
+          else { return 0.1 }
       }))
-      
       .force("collide", d3.forceCollide<GraphNode>().radius(d => getNodeRadius(d.data.size || 1) + 30)); 
 
-    // Custom Boundary Repulsion Force
-    // Pushes nodes away from edges softly
-    const boundaryPadding = 120; // Reduced padding to allow filling corners
+    const boundaryPadding = 120; 
     const boundaryStrength = 0.8; 
     
     simulation.force("boundary", () => {
         const alpha = simulation.alpha();
         nodes.forEach(node => {
             if (node.x === undefined || node.y === undefined || node.vx === undefined || node.vy === undefined) return;
-            
-            // Left Edge
-            if (node.x < boundaryPadding) {
-                node.vx += (boundaryPadding - node.x) * boundaryStrength * alpha;
-            }
-            // Right Edge
-            if (node.x > worldWidth - boundaryPadding) {
-                node.vx -= (node.x - (worldWidth - boundaryPadding)) * boundaryStrength * alpha;
-            }
-            // Top Edge
-            if (node.y < boundaryPadding) {
-                node.vy += (boundaryPadding - node.y) * boundaryStrength * alpha;
-            }
-            // Bottom Edge
-            if (node.y > worldHeight - boundaryPadding) {
-                node.vy -= (node.y - (worldHeight - boundaryPadding)) * boundaryStrength * alpha;
-            }
+            if (node.x < boundaryPadding) { node.vx += (boundaryPadding - node.x) * boundaryStrength * alpha; }
+            if (node.x > worldWidth - boundaryPadding) { node.vx -= (node.x - (worldWidth - boundaryPadding)) * boundaryStrength * alpha; }
+            if (node.y < boundaryPadding) { node.vy += (boundaryPadding - node.y) * boundaryStrength * alpha; }
+            if (node.y > worldHeight - boundaryPadding) { node.vy -= (node.y - (worldHeight - boundaryPadding)) * boundaryStrength * alpha; }
         });
     });
 
-    // Relax mechanism: Reduce charge after initial explosion.
-    // Increased delay from 800ms to 2500ms to allow more rearranging time.
-    const relaxTimer = setTimeout(() => {
-        const chargeForce = simulation.force("charge") as d3.ForceManyBody<GraphNode>;
-        if (chargeForce) {
-            // Revert to standard sustained repulsion
-            chargeForce.strength(-2500); 
-            simulation.alpha(0.3).restart(); 
-        }
-    }, 2500); 
-
-    // --- Draw Physical Links ---
+    // --- Draw Main Elements ---
     const linkGroup = g.append("g").attr("class", "links");
+    const linkHitAreas = linkGroup.selectAll("path.hit-area").data(physicalLinks).join("path")
+      .attr("class", "hit-area").attr("stroke", "transparent").attr("stroke-width", 20).attr("fill", "none")
+      .style("cursor", "pointer").on("click", (event, d) => { event.stopPropagation(); onSelectLinkRef.current(getLinkId(d)); });
 
-    const linkHitAreas = linkGroup.selectAll("path.hit-area")
-      .data(physicalLinks).join("path")
-      .attr("class", "hit-area")
-      .attr("stroke", "transparent").attr("stroke-width", 20).attr("fill", "none")
-      .style("cursor", "pointer")
-      .on("click", (event, d) => { event.stopPropagation(); onSelectLinkRef.current(getLinkId(d)); });
-
-    const linkVisible = linkGroup.selectAll("path.visible-link")
-      .data(physicalLinks).join("path")
-      .attr("class", "visible-link")
-      .attr("stroke", "#475569").attr("stroke-width", d => d.data.road ? 6 : 2)
+    const linkVisible = linkGroup.selectAll("path.visible-link").data(physicalLinks).join("path")
+      .attr("class", "visible-link").attr("stroke", "#475569").attr("stroke-width", d => d.data.road ? 6 : 2)
       .attr("stroke-dasharray", d => d.data.connectionType === 'Proximity' ? "6,6" : "0")
-      .attr("fill", "none").style("cursor", "pointer")
-      .on("click", (event, d) => { event.stopPropagation(); onSelectLinkRef.current(getLinkId(d)); });
+      .attr("fill", "none").style("cursor", "pointer").on("click", (event, d) => { event.stopPropagation(); onSelectLinkRef.current(getLinkId(d)); });
 
-    // --- Link Labels ---
+    // Link Labels
     const linkLabelGroup = g.append("g").attr("class", "link-labels");
     const linkLabel = linkLabelGroup.selectAll("g").data(physicalLinks).join("g")
-        .style("cursor", "pointer")
-        .on("click", (event, d) => { event.stopPropagation(); onSelectLinkRef.current(getLinkId(d)); });
+        .style("cursor", "pointer").on("click", (event, d) => { event.stopPropagation(); onSelectLinkRef.current(getLinkId(d)); });
     
     linkLabel.append("rect").attr("rx", 6).attr("ry", 6).attr("fill", d => getGuardFillColor(d.data.guardValue || 0))
         .attr("stroke", "#0f172a").attr("stroke-width", 2).attr("opacity", 0.9);
 
     const linkText = linkLabel.append("text")
         .text(d => d.data.guardValue ? `${Math.round(d.data.guardValue/1000)}k` : "")
-        .attr("fill", "#e2e8f0").attr("font-size", "11px").attr("font-weight", "bold")
-        .attr("text-anchor", "middle").attr("dy", "0.35em");
+        .attr("fill", "#e2e8f0").attr("font-size", "11px").attr("font-weight", "bold").attr("text-anchor", "middle").attr("dy", "0.35em");
 
-    // --- Draw Portals ---
+    // Portals
     const portalGroup = g.append("g").attr("class", "portals");
     const portalElements = portalGroup.selectAll("g.portal-connection").data(portalLinks).join("g")
         .attr("class", "portal-connection").style("cursor", "pointer")
@@ -488,6 +456,7 @@ const MapGraph: React.FC<MapGraphProps> = ({ data, onSelectNode, onSelectLink, s
     const portalSourceArrow = portalElements.append("g").attr("class", "source-arrow");
     const portalTargetArrow = portalElements.append("g").attr("class", "target-arrow");
 
+    // Helper for Arrows
     const drawArrowWithTail = (selection: d3.Selection<SVGGElement, ProcessedLink, any, any>) => {
         const TAIL_LENGTH = 24; 
         selection.append("path")
@@ -517,8 +486,7 @@ const MapGraph: React.FC<MapGraphProps> = ({ data, onSelectNode, onSelectLink, s
     portalGuardGroup.append("text").text(d => d.data.guardValue ? `${Math.round(d.data.guardValue/1000)}k` : "")
         .attr("font-size", "10px").attr("font-weight", "bold").attr("fill", "#e2e8f0").attr("text-anchor", "middle").attr("dy", "0.3em");
 
-
-    // --- Nodes ---
+    // Nodes
     const nodeGroup = g.append("g").attr("class", "nodes");
     const drag = d3.drag<SVGGElement, GraphNode>()
       .on("start", (event, d) => {
@@ -549,13 +517,11 @@ const MapGraph: React.FC<MapGraphProps> = ({ data, onSelectNode, onSelectLink, s
       .attr("stroke-width", d => (d.data.guardedContentValue || 0) > 2000000 ? 4 : 2)
       .style("filter", d => (d.data.guardedContentValue || 0) > 2000000 ? "drop-shadow(0 0 4px rgba(245, 158, 11, 0.5))" : "none");
 
-    // Node Text/Icons Logic
     node.each(function(d) {
         const el = d3.select(this);
         const r = getNodeRadius(d.data.size || 1);
         const objects = d.data.mainObjects || [];
         const displayObjs = objects.filter(o => o.type === 'City' || o.type === 'Spawn');
-
         const renderObj = (obj: any, x: number, y: number, fontSize: number) => {
              let txt = "⌂"; let color = "#e2e8f0";
              if (obj.type === 'Spawn') { txt = obj.spawn?.replace('Player', 'P') || 'S'; color = getPlayerColor(obj.spawn); } 
@@ -563,7 +529,6 @@ const MapGraph: React.FC<MapGraphProps> = ({ data, onSelectNode, onSelectLink, s
              el.append("text").text(txt).attr("x", x).attr("y", y).attr("text-anchor", "middle").attr("dy", "0.35em")
                 .attr("fill", color).attr("font-size", `${fontSize}px`).attr("font-weight", "bold").style("pointer-events", "none");
         };
-        
         if (displayObjs.length === 0) {
             el.append("text").text("⌂").attr("text-anchor", "middle").attr("dy", "0.35em")
                 .attr("fill", "#64748b").attr("font-size", `${r}px`).style("pointer-events", "none"); 
@@ -581,7 +546,7 @@ const MapGraph: React.FC<MapGraphProps> = ({ data, onSelectNode, onSelectLink, s
 
     // --- TICK ---
     simulation.on("tick", () => {
-      // 1. Update Physical Links
+      // 1. Update Main Graph
       const updateLinkPath = (d: any) => {
           const l = d as ProcessedLink; const src = l.source as GraphNode; const tgt = l.target as GraphNode;
           if (src.x === undefined || src.y === undefined || tgt.x === undefined || tgt.y === undefined) return "";
@@ -589,15 +554,7 @@ const MapGraph: React.FC<MapGraphProps> = ({ data, onSelectNode, onSelectLink, s
       };
       linkVisible.attr("d", updateLinkPath);
       linkHitAreas.attr("d", updateLinkPath);
-
-      // Update Minimap Links
-      miniLinks
-        .attr("x1", d => ((d.source as GraphNode).x || 0) * minimapScale)
-        .attr("y1", d => ((d.source as GraphNode).y || 0) * minimapScale)
-        .attr("x2", d => ((d.target as GraphNode).x || 0) * minimapScale)
-        .attr("y2", d => ((d.target as GraphNode).y || 0) * minimapScale);
-
-      // Update Labels position
+      
       linkLabel.attr("transform", (d: any) => {
           const l = d as ProcessedLink; const src = l.source as GraphNode; const tgt = l.target as GraphNode;
           if (!src.x || !src.y || !tgt.x || !tgt.y) return "translate(0,0)";
@@ -618,26 +575,14 @@ const MapGraph: React.FC<MapGraphProps> = ({ data, onSelectNode, onSelectLink, s
             .attr("x", bbox.x - 8).attr("y", bbox.y - 4).attr("width", bbox.width + 16).attr("height", bbox.height + 8);
       });
 
-      // 2. Update Nodes
-      // Use Hard Clamp as a safety net (keep nodes strictly within bounds), 
-      // but rely on "boundary" force for soft repulsion from edges.
-      // Offset by radius to prevent circle clipping.
       nodes.forEach(d => {
            const r = getNodeRadius(d.data.size || 1);
            d.x = Math.max(r + 10, Math.min(worldWidth - (r + 10), d.x || 0));
            d.y = Math.max(r + 10, Math.min(worldHeight - (r + 10), d.y || 0));
       });
-
       node.attr("transform", d => `translate(${d.x},${d.y})`);
       nodes.forEach(n => { if (n.x && n.y) nodePositions.current.set(n.id, {x: n.x, y: n.y, fx: n.fx, fy: n.fy}); });
 
-      // Update Minimap Nodes
-      miniNodes
-        .attr("cx", d => (d.x || 0) * minimapScale)
-        .attr("cy", d => (d.y || 0) * minimapScale);
-
-
-      // 3. Update Portal Arrows
       portalElements.each(function(d) {
           const link = d as ProcessedLink; const src = link.source as GraphNode; const tgt = link.target as GraphNode;
           if (!src.x || !src.y || !tgt.x || !tgt.y) return;
@@ -666,20 +611,34 @@ const MapGraph: React.FC<MapGraphProps> = ({ data, onSelectNode, onSelectLink, s
           const tgtGroup = d3.select(this).select(".target-arrow");
           tgtGroup.attr("transform", `translate(${tgtArrowX}, ${tgtArrowY}) rotate(${tgtAngle})`);
       });
+
+      // 2. Update Minimap (Using Refs to access latest selections even if re-mounted)
+      const minimapScale = minimapScaleRef.current;
+      
+      if (miniNodesRef.current) {
+          miniNodesRef.current
+            .attr("cx", d => (d.x || 0) * minimapScale)
+            .attr("cy", d => (d.y || 0) * minimapScale);
+      }
+      if (miniLinksRef.current) {
+          miniLinksRef.current
+            .attr("x1", d => ((d.source as GraphNode).x || 0) * minimapScale)
+            .attr("y1", d => ((d.source as GraphNode).y || 0) * minimapScale)
+            .attr("x2", d => ((d.target as GraphNode).x || 0) * minimapScale)
+            .attr("y2", d => ((d.target as GraphNode).y || 0) * minimapScale);
+      }
     });
 
     return () => {
-      clearTimeout(relaxTimer);
       simulation.stop();
     };
-  }, [data, worldWidth, worldHeight]); // Dependencies updated to include dynamic dimensions
+  }, [nodes, physicalLinks, portalLinks, worldWidth, worldHeight]);
 
-  // Effect 2: Handle Selection Styling
+  // Handle Selection Styling
   useEffect(() => {
     if (!svgRef.current) return;
     const svg = d3.select(svgRef.current);
     
-    // Update Nodes Style
     svg.selectAll(".node-group circle[id^='node-circle']")
        .attr("stroke", function() {
            const d = d3.select(this).datum() as GraphNode;
@@ -694,7 +653,6 @@ const MapGraph: React.FC<MapGraphProps> = ({ data, onSelectNode, onSelectLink, s
            return isRich ? "drop-shadow(0 0 4px rgba(245, 158, 11, 0.5))" : "none";
        });
 
-    // Update Links Style (Physical)
     svg.selectAll(".visible-link")
         .attr("stroke", function() {
             const d = d3.select(this).datum() as GraphLink;
@@ -706,7 +664,6 @@ const MapGraph: React.FC<MapGraphProps> = ({ data, onSelectNode, onSelectLink, s
              return getLinkId(d) === selectedId ? 1 : 0.8;
         });
 
-    // Update Portal Style
     svg.selectAll(".portal-connection")
         .attr("opacity", function() {
             const d = d3.select(this).datum() as GraphLink;
@@ -729,104 +686,21 @@ const MapGraph: React.FC<MapGraphProps> = ({ data, onSelectNode, onSelectLink, s
                   });
         });
 
-    // Reset Group Order
     svg.select(".links").lower();
     svg.select("rect").lower();       
     svg.select(".portals").raise();
     svg.select(".link-labels").raise(); 
     svg.select(".nodes").raise();       
        
-  }, [selectedId, data]); 
-
-  const handleBackgroundClick = () => {
-      onSelectNodeRef.current(null);
-      onSelectLinkRef.current(null);
-  };
+  }, [selectedId, nodes]); 
 
   return (
     <div ref={containerRef} className="w-full h-full bg-[#0f172a] relative overflow-hidden">
+        {/* Title Watermark */}
         <div className="absolute top-4 left-4 z-10 pointer-events-none opacity-50">
             <h2 className="text-4xl font-black text-slate-700 select-none tracking-tighter">RMG EDITOR</h2>
         </div>
-      <svg ref={svgRef} className="w-full h-full block" onClick={handleBackgroundClick}></svg>
-
-      {/* Minimap Container - Adaptive Height */}
-      <div className="absolute bottom-4 right-4 bg-slate-900 border border-slate-700 shadow-xl rounded-lg overflow-hidden z-20">
-          <svg 
-            ref={minimapRef} 
-            width={MINIMAP_UI_WIDTH} 
-            height={minimapHeight} 
-            className="block cursor-crosshair hover:bg-slate-800/50 transition-colors"
-          />
-          <div className="bg-slate-950 px-2 py-1 text-[10px] text-slate-500 font-mono text-center border-t border-slate-800">
-              MINIMAP {worldWidth}x{worldHeight}
-          </div>
-      </div>
-      
-      {/* Legend */}
-       <div className="absolute bottom-4 left-4 bg-slate-900/90 backdrop-blur border border-slate-700 p-3 rounded-lg text-xs pointer-events-none select-none shadow-xl">
-            <div className="font-bold text-slate-400 mb-2 uppercase tracking-wider">图例说明</div>
-            <div className="flex items-center gap-2 mb-1">
-                <span className="w-3 h-3 rounded-full bg-[#f59e0b] border border-slate-500 shadow-[0_0_4px_#f59e0b]"></span>
-                <span className="text-amber-500">高价值区域 ({'>'}2M)</span>
-            </div>
-            <div className="flex items-center gap-2 mb-1">
-                <span className="w-3 h-3 rounded-full bg-[#1e293b] border border-slate-500"></span>
-                <span className="text-slate-300">普通区域</span>
-            </div>
-            <div className="h-px bg-slate-700 my-2"></div>
-            <div className="flex items-center gap-2 mb-1">
-                <span className="w-8 h-4 rounded bg-[#7f1d1d] flex items-center justify-center text-[8px] font-bold text-white">40k</span>
-                <span className="text-red-400">强力守卫 ({'>'}=40k)</span>
-            </div>
-            <div className="flex items-center gap-2 mb-1">
-                <span className="w-8 h-4 rounded bg-[#14532d] flex items-center justify-center text-[8px] font-bold text-white">2k</span>
-                <span className="text-green-400">弱守卫</span>
-            </div>
-             <div className="h-px bg-slate-700 my-2"></div>
-             
-             {/* Connection Types Legend */}
-             <div className="flex items-center gap-2 mb-1">
-                 <span className="w-8 h-0 border-b-[4px] border-slate-500"></span>
-                 <span className="text-slate-400">道路连接 (Road)</span>
-             </div>
-             <div className="flex items-center gap-2 mb-1">
-                 <svg width="32" height="6" className="overflow-visible">
-                     <path d="M 0 3 Q 8 6, 16 3 T 32 3" fill="none" stroke="#64748b" strokeWidth="2" />
-                 </svg>
-                 <span className="text-slate-400">野外连接 (Passage)</span>
-             </div>
-             <div className="flex items-center gap-2 mb-1">
-                 <div className="flex items-center">
-                     <span className="w-0 h-0 border-l-[4px] border-l-transparent border-r-[4px] border-r-transparent border-b-[6px] border-b-cyan-400 rotate-90"></span>
-                     <span className="w-0 h-0 border-l-[4px] border-l-transparent border-r-[4px] border-r-transparent border-b-[6px] border-b-cyan-400 -rotate-90 ml-1"></span>
-                 </div>
-                 <span className="text-cyan-400">传送门 (Portal)</span>
-             </div>
-             <div className="flex items-center gap-2 mb-1">
-                 <span className="w-8 border-b-2 border-slate-500 border-dashed h-0"></span>
-                 <span className="text-slate-400">邻近连接 (Proximity)</span>
-             </div>
-             <div className="h-px bg-slate-700 my-2"></div>
-             <div className="flex items-center gap-2 mb-1">
-                 <span className="w-3 h-0 border-b-[2px] border-slate-600 border-dashed"></span>
-                 <span className="text-slate-500 text-[10px]">地图边界 ({data.sizeX}x{data.sizeZ})</span>
-             </div>
-
-             <div className="h-px bg-slate-700 my-2"></div>
-             <div className="flex items-center gap-2 mb-1">
-                 <span className="text-slate-300 font-bold">⌂</span>
-                 <span>城市</span>
-             </div>
-             <div className="grid grid-cols-4 gap-1 w-full">
-                 {[1,2,3,4,5,6,7,8].map(i => (
-                     <div key={i} className="flex items-center gap-1">
-                         <span className="w-2 h-2 rounded-full" style={{background: getPlayerColor(`Player${i}`)}}></span>
-                         <span className="text-[9px] text-slate-400">P{i}</span>
-                     </div>
-                 ))}
-             </div>
-        </div>
+      <svg ref={svgRef} className="w-full h-full block"></svg>
     </div>
   );
 };

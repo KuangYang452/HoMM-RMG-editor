@@ -1,22 +1,28 @@
 
 import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
-import { Upload, Download, FileJson, Settings } from 'lucide-react';
+import { Upload, Download, FileJson } from 'lucide-react';
 import MapGraph from './components/MapGraph';
 import PropertyEditor from './components/PropertyEditor';
-import DebugOverlay, { debugTrack } from './components/DebugMonitor'; // Import Debug Module
-import { RmgFile, RmgZone, RmgConnection, GraphNode, GraphLink } from './types';
+import MapInfoPanel from './components/MapInfoPanel';
+import GlobalSettingsModal from './components/GlobalSettingsModal';
+import DebugOverlay, { debugTrack } from './components/DebugMonitor'; 
+import { RmgFile, RmgZone, RmgConnection } from './types';
 import { DEFAULT_RMG_DATA } from './constants';
 
-type SelectionType = 'zone' | 'link' | 'global' | null;
+type SelectionType = 'zone' | 'link' | null;
 
 const App: React.FC = () => {
   const [data, setData] = useState<RmgFile>(DEFAULT_RMG_DATA);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectionType, setSelectionType] = useState<SelectionType>(null);
-  const [showSettings, setShowSettings] = useState<boolean>(false); // 仅用于 UI 状态切换，实际数据走 global 逻辑
   const [fileName, setFileName] = useState<string>("SmallLand.json");
   
-  // Ref for file input to trigger it programmatically via shortcut
+  // Modal State
+  const [isGlobalSettingsOpen, setIsGlobalSettingsOpen] = useState(false);
+
+  // Shared Ref for the Minimap SVG element
+  const minimapRef = useRef<SVGSVGElement>(null);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Debug: Track Complete App State
@@ -39,9 +45,9 @@ const App: React.FC = () => {
         try {
           const json = JSON.parse(e.target?.result as string);
           setData(json);
+          // Reset to global view on load
           setSelectedId(null);
           setSelectionType(null);
-          setShowSettings(false);
         } catch (error) {
           alert("无效的 JSON 文件");
         }
@@ -66,7 +72,6 @@ const App: React.FC = () => {
   // Keyboard Shortcuts (Ctrl+S, Ctrl+O)
   useEffect(() => {
       const handleKeyDown = (e: KeyboardEvent) => {
-          // Check for Ctrl (Windows/Linux) or Command (Mac)
           const isModifier = e.ctrlKey || e.metaKey;
           
           if (isModifier && e.key.toLowerCase() === 's') {
@@ -84,10 +89,8 @@ const App: React.FC = () => {
       return () => window.removeEventListener('keydown', handleKeyDown);
   }, [handleDownload]);
 
-  // 核心逻辑：根据 ID 和类型，从当前 data 中提取要编辑的对象
-  // 这确保了编辑器总是能获取到最新的数据源，或者在重绘后重新绑定
+  // Logic to extract object to edit
   const editingData = useMemo(() => {
-      if (selectionType === 'global') return data;
       if (!data.variants || data.variants.length === 0) return null;
 
       const variant = data.variants[0];
@@ -97,25 +100,17 @@ const App: React.FC = () => {
       }
 
       if (selectionType === 'link' && selectedId) {
-          // Link ID 可能是 name，或者构造的复合 ID
           return variant.connections.find(c => c.name === selectedId || `${c.from}-${c.to}` === selectedId) || null;
       }
 
       return null;
   }, [data, selectedId, selectionType]);
 
-  // Track the object being edited
-  useEffect(() => {
-      debugTrack('EditingData (Source)', editingData);
-  }, [editingData]);
-
-  // Handle Save (Apply Changes)
-  const handleSave = useCallback((newData: any) => {
-      if (selectionType === 'global') {
-          setData(newData as RmgFile);
-      } else if (selectionType === 'zone') {
+  // Handle Save (Apply Changes from PropertyEditor)
+  const handlePropertySave = useCallback((newData: any) => {
+      if (selectionType === 'zone') {
           const newZone = newData as RmgZone;
-          const oldName = selectedId; // 当前选中的 ID (旧名)
+          const oldName = selectedId; 
 
           setData(prevData => {
               const nextData = { ...prevData };
@@ -126,7 +121,7 @@ const App: React.FC = () => {
                       zones[idx] = newZone;
                       nextData.variants[0].zones = zones;
 
-                      // 如果名字改了，需要级联更新连接
+                      // Cascade Update Connections if name changed
                       if (oldName !== newZone.name) {
                           const connections = [...nextData.variants[0].connections];
                           connections.forEach(conn => {
@@ -140,18 +135,15 @@ const App: React.FC = () => {
               return nextData;
           });
           
-          // 如果名字改变了，更新选中的 ID，防止编辑器丢失焦点
           if (oldName !== newZone.name) {
               setSelectedId(newZone.name);
           }
       } else if (selectionType === 'link') {
           const newConn = newData as RmgConnection;
-          // 对于连接，我们主要替换匹配的那一条
           setData(prevData => {
               const nextData = { ...prevData };
               if (nextData.variants.length > 0) {
                   const connections = [...nextData.variants[0].connections];
-                  // 尝试通过 ID 匹配 (可能是 name 或 组合键)
                   const idx = connections.findIndex(c => c.name === selectedId || `${c.from}-${c.to}` === selectedId);
                   if (idx !== -1) {
                       connections[idx] = newConn;
@@ -161,7 +153,6 @@ const App: React.FC = () => {
               return nextData;
           });
           
-          // 更新选中的 ID (以防 name 变了)
           const newId = newConn.name || `${newConn.from}-${newConn.to}`;
           if (selectedId !== newId) {
               setSelectedId(newId);
@@ -169,25 +160,27 @@ const App: React.FC = () => {
       }
   }, [selectionType, selectedId]);
 
-  const openSettings = () => {
-      setSelectionType('global');
-      setSelectedId('global'); // Dummy ID
-      setShowSettings(true);
-  };
+  // Handle Update from MapInfoPanel or GlobalSettingsModal
+  const handleGlobalUpdate = useCallback((newData: RmgFile) => {
+      setData(newData);
+  }, []);
 
-  const closeEditor = () => {
-      setSelectionType(null);
+  const handleBackgroundClick = () => {
       setSelectedId(null);
-      setShowSettings(false);
+      setSelectionType(null);
   };
 
   return (
-    <div className="flex flex-col h-screen w-screen bg-slate-900 text-slate-100">
+    <div className="flex flex-col h-screen w-screen bg-slate-900 text-slate-100 font-sans">
       <DebugOverlay />
+      <GlobalSettingsModal 
+          isOpen={isGlobalSettingsOpen} 
+          onClose={() => setIsGlobalSettingsOpen(false)} 
+          data={data}
+          onSave={handleGlobalUpdate}
+      />
       
       {/* Toolbar */}
-      {/* Added 'app-region: drag' style via inline CSS for Electron draggable support if we were using frameless window, 
-          but keeping standard header for now. To enable drag: style={{ WebkitAppRegion: 'drag' } as any} */}
       <header className="h-14 bg-slate-800 border-b border-slate-700 flex items-center px-4 justify-between shrink-0 z-30 shadow-md select-none">
         <div className="flex items-center gap-3">
             <div className="bg-amber-600 p-1.5 rounded-lg">
@@ -199,16 +192,6 @@ const App: React.FC = () => {
         </div>
 
         <div className="flex items-center gap-4">
-            <button 
-                onClick={openSettings}
-                className={`flex items-center gap-2 text-sm font-medium py-1.5 px-3 rounded transition-colors ${selectionType === 'global' ? 'bg-amber-600/20 text-amber-500 border border-amber-600/50' : 'bg-slate-700 hover:bg-slate-600 text-slate-200'}`}
-            >
-                <Settings size={16} />
-                地图设置
-            </button>
-
-            <div className="h-6 w-px bg-slate-700 mx-2"></div>
-
             <div className="text-sm text-slate-400 bg-slate-900 py-1 px-3 rounded border border-slate-700 max-w-[150px] truncate">
                 {fileName}
             </div>
@@ -230,36 +213,51 @@ const App: React.FC = () => {
         </div>
       </header>
 
-      {/* Main Workspace */}
-      <div className="flex-1 flex overflow-hidden relative">
+      {/* Main Workspace - Fixed Two Column Layout */}
+      <div className="flex-1 flex overflow-hidden">
         
-        {/* Visualizer */}
-        <div className="flex-1 relative">
+        {/* Left: Visualization (Flexible Width) */}
+        <div className="flex-1 relative border-r border-slate-800">
             <MapGraph 
                 data={data} 
                 onSelectNode={(id) => { 
-                    setSelectedId(id); 
-                    setSelectionType(id ? 'zone' : null);
-                    if(id) setShowSettings(false);
+                    if (id) {
+                        setSelectedId(id); 
+                        setSelectionType('zone');
+                    } else {
+                        handleBackgroundClick();
+                    }
                 }}
                 onSelectLink={(id) => { 
-                    setSelectedId(id); 
-                    setSelectionType(id ? 'link' : null);
-                    if(id) setShowSettings(false);
+                    if (id) {
+                        setSelectedId(id); 
+                        setSelectionType('link');
+                    } else {
+                        handleBackgroundClick();
+                    }
                 }}
                 selectedId={selectedId}
+                minimapRef={minimapRef}
             />
         </div>
 
-        {/* Property Inspector */}
-        <div className={`transition-all duration-300 ease-in-out bg-slate-800 border-l border-slate-700 z-20 ${selectionType ? 'w-96' : 'w-0'}`}>
-            <PropertyEditor 
-                type={selectionType}
-                data={editingData}
-                fullData={data}
-                onClose={closeEditor}
-                onSave={handleSave}
-            />
+        {/* Right: Property Inspector OR Map Info (Fixed Width) */}
+        <div className="w-[400px] bg-slate-900 flex flex-col z-20 shadow-xl transition-all">
+            {selectionType ? (
+                 <PropertyEditor 
+                    type={selectionType}
+                    data={editingData}
+                    fullData={data}
+                    onSave={handlePropertySave}
+                />
+            ) : (
+                <MapInfoPanel 
+                    data={data} 
+                    onUpdate={handleGlobalUpdate}
+                    minimapRef={minimapRef}
+                    onOpenGlobalSettings={() => setIsGlobalSettingsOpen(true)}
+                />
+            )}
         </div>
 
       </div>
