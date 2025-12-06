@@ -365,18 +365,42 @@ const MapGraph: React.FC<MapGraphProps> = ({ data, onSelectNode, onSelectLink, s
       // Result: Links are mostly in tension (attracting), preventing them from "pushing" nodes apart (repulsion).
       .force("link", d3.forceLink<GraphNode, ProcessedLink>(physicalLinks).id(d => d.id).distance(110)) 
       
-      // High Repulsion to ensure space filling
-      .force("charge", d3.forceManyBody().strength(-3000))
+      // High Repulsion to ensure space filling (Increased from -3000 to -5000 for stronger initial explosion)
+      .force("charge", d3.forceManyBody().strength(-5000))
       
-      // 2. Empty Area Attraction (Simulated):
-      // Nodes with few connections (degree <= 1) have minimal center gravity (0.002).
-      // Nodes with many connections (degree > 1) have standard gravity (0.05).
-      // Result: Loose nodes are pushed by the Charge force away from the dense center into the "empty" void.
-      .force("x", d3.forceX(worldWidth / 2).strength(d => {
+      // 2. Empty Area Attraction & Layout Gravity
+      // MODIFIED: Changed Logic for "Sides" to be negative strength (repulsion from center) instead of fixed coordinates.
+      .force("x", d3.forceX<GraphNode>(worldWidth / 2).strength(d => {
+          // Priority: Layout "Center" targets the middle (Positive Strength = Attraction)
+          if (d.data.layout?.toLowerCase().includes('center')) {
+              return 0.25;
+          }
+          // Priority: Layout "Sides" targets the middle but with NEGATIVE strength (Repulsion)
+          // This gently pushes them away from the center towards the edges without snapping.
+          else if (d.data.layout?.toLowerCase().includes('sides')) {
+              return 0;
+          }
+          else {
+            return 0.05;
+          }
+
+          // Default: Weak pull to center for stability
           const deg = nodeDegree.get(d.id) || 0;
           return deg > 1 ? 0.05 : 0.002; 
       })) 
-      .force("y", d3.forceY(worldHeight / 2).strength(d => {
+      .force("y", d3.forceY<GraphNode>(worldHeight / 2).strength(d => {
+          // Priority: Layout "Center" targets the middle (Positive Strength = Attraction)
+          if (d.data.layout?.toLowerCase().includes('center')) {
+              return 0.25;
+          }
+          // Priority: Layout "Sides" targets the middle but with NEGATIVE strength (Repulsion)
+          else if (d.data.layout?.toLowerCase().includes('sides')) {
+              return 0;
+          }
+          else {
+            return 0.05
+          }
+
           const deg = nodeDegree.get(d.id) || 0;
           return deg > 1 ? 0.05 : 0.002;
       }))
@@ -412,15 +436,16 @@ const MapGraph: React.FC<MapGraphProps> = ({ data, onSelectNode, onSelectLink, s
         });
     });
 
-    // Relax mechanism: Reduce charge after initial explosion, but keep it high enough to fill space
+    // Relax mechanism: Reduce charge after initial explosion.
+    // Increased delay from 800ms to 2500ms to allow more rearranging time.
     const relaxTimer = setTimeout(() => {
         const chargeForce = simulation.force("charge") as d3.ForceManyBody<GraphNode>;
         if (chargeForce) {
-            // High sustained repulsion to keep nodes spread out in empty areas
+            // Revert to standard sustained repulsion
             chargeForce.strength(-2500); 
             simulation.alpha(0.3).restart(); 
         }
-    }, 800); 
+    }, 2500); 
 
     // --- Draw Physical Links ---
     const linkGroup = g.append("g").attr("class", "links");
