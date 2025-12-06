@@ -19,6 +19,7 @@ const App: React.FC = () => {
   
   // Modal State
   const [isGlobalSettingsOpen, setIsGlobalSettingsOpen] = useState(false);
+  const [globalSettingsTab, setGlobalSettingsTab] = useState<'rules' | 'layouts' | 'variants' | 'content'>('rules');
 
   // Shared Ref for the Minimap SVG element
   const minimapRef = useRef<SVGSVGElement>(null);
@@ -34,6 +35,11 @@ const App: React.FC = () => {
         file: fileName
     });
   }, [data, selectionType, selectedId, fileName]);
+
+  const handleOpenGlobalSettings = (tab: 'rules' | 'layouts' | 'variants' | 'content' = 'rules') => {
+      setGlobalSettingsTab(tab);
+      setIsGlobalSettingsOpen(true);
+  };
 
   // Handle File Upload
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -178,6 +184,7 @@ const App: React.FC = () => {
           onClose={() => setIsGlobalSettingsOpen(false)} 
           data={data}
           onSave={handleGlobalUpdate}
+          initialTab={globalSettingsTab}
       />
       
       {/* Toolbar */}
@@ -249,13 +256,14 @@ const App: React.FC = () => {
                     data={editingData}
                     fullData={data}
                     onSave={handlePropertySave}
+                    onOpenGlobalSettings={handleOpenGlobalSettings}
                 />
             ) : (
                 <MapInfoPanel 
                     data={data} 
                     onUpdate={handleGlobalUpdate}
                     minimapRef={minimapRef}
-                    onOpenGlobalSettings={() => setIsGlobalSettingsOpen(true)}
+                    onOpenGlobalSettings={() => handleOpenGlobalSettings('rules')}
                 />
             )}
         </div>

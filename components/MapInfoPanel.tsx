@@ -1,13 +1,14 @@
 
 import React from 'react';
 import { RmgFile } from '../types';
-import { Map as MapIcon, Settings, Info, Hash, Monitor, FileText } from 'lucide-react';
+import { Map as MapIcon, Info, Hash, Monitor, FileText, Settings, Trophy } from 'lucide-react';
+import { getGameModes, getWinConditions, getTemplateDescriptions } from '../utils/localization';
 
 interface MapInfoPanelProps {
   data: RmgFile;
   onUpdate: (newData: RmgFile) => void;
   minimapRef: React.RefObject<SVGSVGElement | null>;
-  onOpenGlobalSettings: () => void;
+  onOpenGlobalSettings: (tab: 'rules' | 'layouts' | 'variants' | 'content') => void;
 }
 
 // 8 Player Colors Helper for Legend
@@ -31,6 +32,10 @@ const MapInfoPanel: React.FC<MapInfoPanelProps> = ({ data, onUpdate, minimapRef,
       onUpdate({ ...data, [field]: value });
   };
 
+  const gameModes = getGameModes();
+  const winConditions = getWinConditions();
+  const templateDescriptions = getTemplateDescriptions();
+
   return (
     <div className="w-full h-full flex flex-col bg-slate-900">
       {/* Header */}
@@ -39,28 +44,82 @@ const MapInfoPanel: React.FC<MapInfoPanelProps> = ({ data, onUpdate, minimapRef,
            <Info size={16} className="text-amber-500"/>
            <span>地图概览 (Map Info)</span>
         </h3>
+        {/* Global Settings Button (Moved to Header) */}
+        <button 
+            onClick={() => onOpenGlobalSettings('rules')}
+            className="p-2 bg-amber-600 hover:bg-amber-500 text-white rounded shadow-md transition-colors"
+            title="全局设定 (Global Settings)"
+        >
+            <Settings size={18} />
+        </button>
       </div>
 
       <div className="flex-1 overflow-y-auto p-4 space-y-5 scrollbar-thin scrollbar-thumb-slate-700">
         
-        {/* Minimap Section */}
-        <div className="space-y-2">
-            <div className="flex justify-between items-center">
-                <label className="text-xs uppercase font-bold text-slate-500 flex items-center gap-2">
-                        <MapIcon size={12} /> 小地图预览
-                </label>
-                <span className="text-[10px] font-mono text-slate-500">{data.sizeX}x{data.sizeZ}</span>
-            </div>
-            <div className="aspect-video w-full bg-slate-950 border border-slate-700 rounded-lg overflow-hidden relative shadow-inner group">
+        {/* Minimap & Legend Container */}
+        <div className="flex gap-2 h-48 bg-slate-950 border border-slate-700 rounded-lg p-2">
+            
+            {/* Left: Minimap */}
+            <div className="flex-1 h-full relative border-r border-slate-800 pr-2">
+                <div className="absolute top-0 left-0 text-[10px] font-bold text-slate-500 flex items-center gap-1 z-10 pointer-events-none">
+                    <MapIcon size={10} /> 
+                    <span>{data.sizeX}x{data.sizeZ}</span>
+                </div>
                 <svg 
                     ref={minimapRef as any}
-                    className="w-full h-full block cursor-crosshair group-hover:opacity-90 transition-opacity"
+                    className="w-full h-full block cursor-crosshair hover:opacity-90 transition-opacity"
                 />
+            </div>
+
+            {/* Right: Legend */}
+            <div className="w-32 h-full overflow-y-auto scrollbar-thin scrollbar-thumb-slate-800 pl-1">
+                <div className="font-bold text-slate-500 text-[9px] mb-2 uppercase tracking-wider sticky top-0 bg-slate-950 pb-1">图例 (Legend)</div>
+                <div className="flex flex-col gap-2 text-[9px]">
+                    <div className="flex items-center gap-2">
+                        <span className="w-2 h-2 rounded-full bg-[#f59e0b] border border-slate-500 shadow-[0_0_2px_#f59e0b] shrink-0"></span>
+                        <span className="text-amber-500 leading-tight">高价值 ({'>'}2M)</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                        <span className="w-2 h-2 rounded-full bg-[#1e293b] border border-slate-500 shrink-0"></span>
+                        <span className="text-slate-300 leading-tight">普通区域</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                        <span className="w-5 h-2.5 rounded bg-[#7f1d1d] flex items-center justify-center text-[6px] font-bold text-white shrink-0">40k</span>
+                        <span className="text-red-400 leading-tight">强守卫</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                        <span className="w-5 h-2.5 rounded bg-[#14532d] flex items-center justify-center text-[6px] font-bold text-white shrink-0">2k</span>
+                        <span className="text-green-400 leading-tight">弱守卫</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                        <span className="w-4 h-0 border-b-[2px] border-slate-500 shrink-0"></span>
+                        <span className="text-slate-400 leading-tight">道路</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                        <svg width="16" height="4" className="overflow-visible shrink-0">
+                            <path d="M 0 2 Q 4 5, 8 2 T 16 2" fill="none" stroke="#64748b" strokeWidth="1" />
+                        </svg>
+                        <span className="text-slate-400 leading-tight">野外</span>
+                    </div>
+                    
+                    <div className="h-px bg-slate-800 my-0.5"></div>
+                    
+                    <div className="flex flex-col gap-1">
+                        <span className="text-slate-400 font-bold">P1-P8</span>
+                        <div className="grid grid-cols-4 gap-1">
+                            {[1,2,3,4,5,6,7,8].map(i => (
+                                <span key={i} className="w-2 h-2 rounded-full" style={{background: getPlayerColor(i)}} title={`Player ${i}`}></span>
+                            ))}
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
 
-        {/* Basic Metadata Inputs */}
+        {/* Map Metadata Inputs */}
         <div className="space-y-4 bg-slate-950/50 p-3 rounded-lg border border-slate-800/50">
+            
+            {/* Map Name */}
             <div className="space-y-1">
                 <label className="text-[10px] uppercase font-bold text-slate-500 flex items-center gap-1">
                     <FileText size={10} /> 地图名称
@@ -73,6 +132,7 @@ const MapInfoPanel: React.FC<MapInfoPanelProps> = ({ data, onUpdate, minimapRef,
                 />
             </div>
 
+            {/* Dimensions */}
             <div className="grid grid-cols-2 gap-3">
                  <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold text-slate-500 flex items-center gap-1">
@@ -98,88 +158,61 @@ const MapInfoPanel: React.FC<MapInfoPanelProps> = ({ data, onUpdate, minimapRef,
                 </div>
             </div>
 
+            {/* Game Mode (Dropdown) */}
              <div className="space-y-1">
                 <label className="text-[10px] uppercase font-bold text-slate-500 flex items-center gap-1">
                     <Monitor size={10} /> 游戏模式 (Mode)
                 </label>
-                <input 
-                    type="text" 
-                    className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-sm text-slate-200 focus:border-amber-500 outline-none"
-                    value={data.gameMode || ""}
+                <select 
+                    className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-sm text-slate-200 focus:border-amber-500 outline-none appearance-none"
+                    value={data.gameMode || "Classic"}
                     onChange={(e) => updateField('gameMode', e.target.value)}
-                />
+                >
+                    {gameModes.map(mode => (
+                        <option key={mode.value} value={mode.value}>{mode.label}</option>
+                    ))}
+                </select>
             </div>
+
+            {/* Win Condition (Dropdown) */}
+            <div className="space-y-1">
+                <label className="text-[10px] uppercase font-bold text-slate-500 flex items-center gap-1">
+                    <Trophy size={10} /> 胜利条件 (Win Condition)
+                </label>
+                <select 
+                    className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-sm text-slate-200 focus:border-amber-500 outline-none appearance-none"
+                    value={data.displayWinCondition || ""}
+                    onChange={(e) => updateField('displayWinCondition', e.target.value)}
+                >
+                    <option value="" disabled>选择胜利条件...</option>
+                    {winConditions.map(wc => (
+                        <option key={wc.value} value={wc.value}>{wc.label}</option>
+                    ))}
+                </select>
+            </div>
+
+            {/* Description (Dropdown) */}
              <div className="space-y-1">
                 <label className="text-[10px] uppercase font-bold text-slate-500 flex items-center gap-1">
-                    <FileText size={10} /> 描述 Key
+                    <FileText size={10} /> 描述模板 (Description)
                 </label>
-                <input 
-                    type="text" 
-                    className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-400 focus:border-amber-500 outline-none"
+                <select 
+                    className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-400 focus:border-amber-500 outline-none appearance-none"
                     value={data.description || ""}
                     onChange={(e) => updateField('description', e.target.value)}
-                />
-            </div>
-        </div>
-
-        {/* Global Settings Trigger */}
-        <button 
-            onClick={onOpenGlobalSettings}
-            className="w-full py-3 bg-amber-600 hover:bg-amber-500 text-white font-bold rounded flex items-center justify-center gap-2 shadow-lg shadow-amber-900/20 transition-all hover:scale-[1.02] active:scale-[0.98]"
-        >
-            <Settings size={18} />
-            编辑全局设定 (Global Settings)
-        </button>
-
-        {/* Legend Section */}
-        <div className="bg-slate-950 border border-slate-800 p-3 rounded-lg">
-            <div className="font-bold text-slate-500 text-[10px] mb-2 uppercase tracking-wider">图例说明 (Legend)</div>
-            <div className="grid grid-cols-2 gap-x-2 gap-y-2 text-[10px]">
-                <div className="flex items-center gap-2">
-                    <span className="w-2.5 h-2.5 rounded-full bg-[#f59e0b] border border-slate-500 shadow-[0_0_2px_#f59e0b]"></span>
-                    <span className="text-amber-500">高价值 ({'>'}2M)</span>
-                </div>
-                <div className="flex items-center gap-2">
-                    <span className="w-2.5 h-2.5 rounded-full bg-[#1e293b] border border-slate-500"></span>
-                    <span className="text-slate-300">普通区域</span>
-                </div>
-                <div className="flex items-center gap-2">
-                    <span className="w-6 h-3 rounded bg-[#7f1d1d] flex items-center justify-center text-[7px] font-bold text-white">40k</span>
-                    <span className="text-red-400">强守卫</span>
-                </div>
-                <div className="flex items-center gap-2">
-                    <span className="w-6 h-3 rounded bg-[#14532d] flex items-center justify-center text-[7px] font-bold text-white">2k</span>
-                    <span className="text-green-400">弱守卫</span>
-                </div>
-                
-                {/* Lines */}
-                <div className="flex items-center gap-2">
-                    <span className="w-6 h-0 border-b-[3px] border-slate-500"></span>
-                    <span className="text-slate-400">道路</span>
-                </div>
-                    <div className="flex items-center gap-2">
-                    <svg width="24" height="4" className="overflow-visible">
-                        <path d="M 0 2 Q 6 5, 12 2 T 24 2" fill="none" stroke="#64748b" strokeWidth="1.5" />
-                    </svg>
-                    <span className="text-slate-400">野外</span>
-                </div>
-
-                    <div className="col-span-2 h-px bg-slate-800 my-1"></div>
-
-                    <div className="col-span-2 flex items-center gap-1.5">
-                        <span className="text-slate-300 font-bold">⌂</span>
-                        <span className="text-slate-400">城市/出生点 (P1-P8)</span>
-                    </div>
-                    <div className="col-span-2 grid grid-cols-4 gap-2 mt-0.5">
-                    {[1,2,3,4,5,6,7,8].map(i => (
-                        <div key={i} className="flex items-center gap-1">
-                            <span className="w-2 h-2 rounded-full" style={{background: getPlayerColor(i)}}></span>
-                            <span className="text-[9px] text-slate-500">P{i}</span>
-                        </div>
+                >
+                    <option value="" disabled>选择描述...</option>
+                    {templateDescriptions.map(desc => (
+                        <option key={desc.value} value={desc.value}>{desc.label}</option>
                     ))}
-                    </div>
+                    {/* Allow custom/unknown values if currently set but not in list */}
+                    {data.description && !templateDescriptions.find(d => d.value === data.description) && (
+                        <option value={data.description}>{data.description} (Custom)</option>
+                    )}
+                </select>
             </div>
         </div>
+
       </div>
     </div>
   );
