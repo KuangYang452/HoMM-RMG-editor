@@ -166,6 +166,106 @@ const App: React.FC = () => {
       }
   }, [selectionType, selectedId]);
 
+  // Handle Delete
+  const handleDelete = useCallback(() => {
+      if (!selectedId || !selectionType) return;
+
+      setData(prevData => {
+          const nextData = { ...prevData };
+          if (!nextData.variants || nextData.variants.length === 0) return nextData;
+
+          const variant = nextData.variants[0];
+
+          if (selectionType === 'zone') {
+              // Remove Zone
+              variant.zones = variant.zones.filter(z => z.name !== selectedId);
+              // Remove associated connections
+              variant.connections = variant.connections.filter(c => c.from !== selectedId && c.to !== selectedId);
+          } else if (selectionType === 'link') {
+              variant.connections = variant.connections.filter(c => 
+                  (c.name && c.name !== selectedId) && 
+                  `${c.from}-${c.to}` !== selectedId
+              );
+          }
+
+          nextData.variants[0] = variant;
+          return nextData;
+      });
+
+      setSelectedId(null);
+      setSelectionType(null);
+  }, [selectedId, selectionType]);
+
+  // Handle Add Zone
+  const handleAddZone = useCallback(() => {
+      setData(prevData => {
+          const nextData = { ...prevData };
+          if (!nextData.variants || nextData.variants.length === 0) {
+              nextData.variants = [{ zones: [], connections: [] }];
+          }
+          const variant = nextData.variants[0];
+          
+          let newName = "New Zone";
+          let counter = 1;
+          while (variant.zones.some(z => z.name === newName)) {
+              newName = `New Zone ${counter++}`;
+          }
+
+          const newZone: RmgZone = {
+              name: newName,
+              size: 1,
+              layout: "zone_layout_default",
+              mainObjects: []
+          };
+
+          variant.zones = [...variant.zones, newZone];
+          nextData.variants[0] = variant;
+          
+          // Select the new zone immediately
+          setTimeout(() => {
+              setSelectedId(newName);
+              setSelectionType('zone');
+          }, 0);
+
+          return nextData;
+      });
+  }, []);
+
+  // Handle Add Connection
+  const handleAddConnection = useCallback((sourceId: string, targetId: string) => {
+      if (!sourceId || !targetId || sourceId === targetId) return;
+
+      setData(prevData => {
+          const nextData = { ...prevData };
+          if (!nextData.variants || nextData.variants.length === 0) return nextData;
+          const variant = nextData.variants[0];
+
+          // Check if exists
+          const exists = variant.connections.some(c => 
+              (c.from === sourceId && c.to === targetId) || 
+              (c.from === targetId && c.to === sourceId)
+          );
+
+          if (exists) {
+              alert("Connection already exists!");
+              return nextData;
+          }
+
+          const newConnection: RmgConnection = {
+              name: `${sourceId}-${targetId}`,
+              from: sourceId,
+              to: targetId,
+              connectionType: "Direct",
+              road: true,
+              guardValue: 0
+          };
+
+          variant.connections = [...variant.connections, newConnection];
+          nextData.variants[0] = variant;
+          return nextData;
+      });
+  }, []);
+
   // Handle Update from MapInfoPanel or GlobalSettingsModal
   const handleGlobalUpdate = useCallback((newData: RmgFile) => {
       setData(newData);
@@ -243,6 +343,8 @@ const App: React.FC = () => {
                         handleBackgroundClick();
                     }
                 }}
+                onAddZone={handleAddZone}
+                onAddConnection={handleAddConnection}
                 selectedId={selectedId}
                 minimapRef={minimapRef}
             />
@@ -256,6 +358,7 @@ const App: React.FC = () => {
                     data={editingData}
                     fullData={data}
                     onSave={handlePropertySave}
+                    onDelete={handleDelete}
                     onOpenGlobalSettings={handleOpenGlobalSettings}
                 />
             ) : (

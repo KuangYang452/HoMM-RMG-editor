@@ -11,6 +11,7 @@ interface PropertyEditorProps {
   data: any; 
   fullData?: RmgFile; 
   onSave: (newData: any) => void;
+  onDelete: () => void;
   onOpenGlobalSettings?: (tab: 'rules' | 'layouts' | 'variants' | 'content' | 'raw') => void;
 }
 
@@ -273,11 +274,13 @@ const PropertyEditor: React.FC<PropertyEditorProps> = ({
   data,
   fullData,
   onSave,
+  onDelete,
   onOpenGlobalSettings
 }) => {
   const [draft, setDraft] = useState<any>(null);
   const [isDirty, setIsDirty] = useState(false);
   const [activeTab, setActiveTab] = useState<ZoneTab>('settings');
+  const [confirmDelete, setConfirmDelete] = useState(false);
   
   // Tooltip & Modal State
   const [hoveredItem, setHoveredItem] = useState<{ item: any, rect: DOMRect } | null>(null);
@@ -287,10 +290,12 @@ const PropertyEditor: React.FC<PropertyEditorProps> = ({
     if (data) {
         setDraft(JSON.parse(JSON.stringify(data)));
         setIsDirty(false);
+        setConfirmDelete(false);
         // Keep tab context when switching between similar types if desired, but for stability reset to settings
         setActiveTab('settings');
     } else {
         setDraft(null);
+        setConfirmDelete(false);
     }
   }, [data]);
 
@@ -311,6 +316,17 @@ const PropertyEditor: React.FC<PropertyEditorProps> = ({
       if (data) {
           setDraft(JSON.parse(JSON.stringify(data)));
           setIsDirty(false);
+      }
+  };
+
+  const handleDeleteClick = () => {
+      if (confirmDelete) {
+          onDelete();
+          setConfirmDelete(false);
+      } else {
+          setConfirmDelete(true);
+          // Auto reset confirm after 3 seconds
+          setTimeout(() => setConfirmDelete(false), 3000);
       }
   };
 
@@ -479,6 +495,15 @@ const PropertyEditor: React.FC<PropertyEditorProps> = ({
             {isZone && <span className="text-amber-500 flex items-center gap-2"><Box size={16} /> {draft.name}</span>}
             {isLink && <span className="text-amber-500 flex items-center gap-2"><Spline size={16} /> 连接属性</span>}
         </h3>
+        
+        {/* Delete Button */}
+        <button 
+            onClick={handleDeleteClick}
+            className={`p-2 rounded transition-colors ${confirmDelete ? 'bg-red-600 text-white' : 'text-slate-500 hover:text-red-400 hover:bg-slate-800'}`}
+            title="Delete this object"
+        >
+            <Trash2 size={18} />
+        </button>
       </div>
 
       {/* Tabs (Only for Zone) */}

@@ -1,12 +1,15 @@
 
-import React, { useEffect, useRef, useMemo } from 'react';
+import React, { useEffect, useRef, useMemo, useState } from 'react';
 import * as d3 from 'd3';
 import { RmgFile, GraphNode, GraphLink } from '../types';
+import { PlusCircle, Network, MousePointer2 } from 'lucide-react';
 
 interface MapGraphProps {
   data: RmgFile;
   onSelectNode: (id: string | null) => void;
   onSelectLink: (id: string | null) => void;
+  onAddZone: () => void;
+  onAddConnection: (sourceId: string, targetId: string) => void;
   selectedId: string | null;
   minimapRef: React.RefObject<SVGSVGElement | null>;
 }
@@ -51,12 +54,29 @@ interface ProcessedLink extends GraphLink {
     linkCount: number;
 }
 
-const MapGraph: React.FC<MapGraphProps> = ({ data, onSelectNode, onSelectLink, selectedId, minimapRef }) => {
+const MapGraph: React.FC<MapGraphProps> = ({ 
+    data, 
+    onSelectNode, 
+    onSelectLink, 
+    onAddZone,
+    onAddConnection,
+    selectedId, 
+    minimapRef 
+}) => {
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const gRef = useRef<d3.Selection<SVGGElement, unknown, null, undefined> | null>(null);
   
+  // Interaction Modes
+  const [isLinkMode, setIsLinkMode] = useState(false);
+  const [linkSourceId, setLinkSourceId] = useState<string | null>(null);
+
+  // Refs to access latest state inside D3 closures without triggering re-renders
   const onSelectNodeRef = useRef(onSelectNode);
   const onSelectLinkRef = useRef(onSelectLink);
+  const onAddConnectionRef = useRef(onAddConnection);
+  const isLinkModeRef = useRef(isLinkMode);
+  const linkSourceIdRef = useRef(linkSourceId);
 
   // Refs for Minimap D3 selections (so main loop can update them without re-binding)
   const miniNodesRef = useRef<d3.Selection<SVGCircleElement, GraphNode, SVGGElement, unknown> | null>(null);
@@ -65,14 +85,17 @@ const MapGraph: React.FC<MapGraphProps> = ({ data, onSelectNode, onSelectLink, s
   const minimapScaleRef = useRef<number>(1);
 
   // Dynamic World Size Calculation
-  // User Requirement: 10 times the map template's x, y values
-  const worldWidth = Math.max((data.sizeX || 64) * 10, 500); // Minimum safety width
+  const worldWidth = Math.max((data.sizeX || 64) * 10, 500); 
   const worldHeight = Math.max((data.sizeZ || 64) * 10, 500);
 
+  // Sync Refs
   useEffect(() => {
     onSelectNodeRef.current = onSelectNode;
     onSelectLinkRef.current = onSelectLink;
-  }, [onSelectNode, onSelectLink]);
+    onAddConnectionRef.current = onAddConnection;
+    isLinkModeRef.current = isLinkMode;
+    linkSourceIdRef.current = linkSourceId;
+  }, [onSelectNode, onSelectLink, onAddConnection, isLinkMode, linkSourceId]);
   
   const nodePositions = useRef<Map<string, {x: number, y: number, fx?: number | null, fy?: number | null}>>(new Map());
   
@@ -153,8 +176,8 @@ const MapGraph: React.FC<MapGraphProps> = ({ data, onSelectNode, onSelectLink, s
           }
 
           const savedPos = nodePositions.current.get(zone.name);
-          let initialX = savedPos?.x ?? (worldWidth/2 + (Math.random() - 0.5) * (worldWidth * 0.2));
-          let initialY = savedPos?.y ?? (worldHeight/2 + (Math.random() - 0.5) * (worldHeight * 0.2));
+          let initialX = savedPos?.x ?? (worldWidth/2 + (Math.random() - 0.5) * 100);
+          let initialY = savedPos?.y ?? (worldHeight/2 + (Math.random() - 0.5) * 100);
           initialX = Math.max(50, Math.min(worldWidth - 50, initialX));
           initialY = Math.max(50, Math.min(worldHeight - 50, initialY));
 
@@ -194,7 +217,7 @@ const MapGraph: React.FC<MapGraphProps> = ({ data, onSelectNode, onSelectLink, s
           linkIndices.set(key, index + 1);
 
           const linkObj = {
-              source: nodeMap.get(conn.from)!, // We know it exists from filter
+              source: nodeMap.get(conn.from)!, 
               target: nodeMap.get(conn.to)!,
               data: conn,
               linkIndex: index,
@@ -212,9 +235,8 @@ const MapGraph: React.FC<MapGraphProps> = ({ data, onSelectNode, onSelectLink, s
 
   }, [data, worldWidth, worldHeight]);
 
-  // --- 2. Minimap Rendering Effect (Separate to handle re-mounting of ref) ---
+  // --- 2. Minimap Rendering Effect ---
   useEffect(() => {
-      // Clean up previous refs if minimap is gone
       if (!minimapRef.current) {
           miniNodesRef.current = null;
           miniLinksRef.current = null;
@@ -225,17 +247,14 @@ const MapGraph: React.FC<MapGraphProps> = ({ data, onSelectNode, onSelectLink, s
       const minimapSvg = d3.select(minimapRef.current);
       minimapSvg.selectAll("*").remove();
 
-      // Measure dimensions
       const width = minimapRef.current.clientWidth || 300;
       const height = minimapRef.current.clientHeight || 200;
       
-      // Calculate Scale (Fit world into minimap container)
       const scaleX = width / worldWidth;
       const scaleY = height / worldHeight;
-      const scale = Math.min(scaleX, scaleY) * 0.9; // 90% fit to add padding
+      const scale = Math.min(scaleX, scaleY) * 0.9; 
       minimapScaleRef.current = scale;
 
-      // Center it
       const offsetX = (width - worldWidth * scale) / 2;
       const offsetY = (height - worldHeight * scale) / 2;
       
@@ -276,12 +295,11 @@ const MapGraph: React.FC<MapGraphProps> = ({ data, onSelectNode, onSelectLink, s
           .attr("fill", "transparent")
           .style("cursor", "move");
 
-      // Save selections for Main Loop
       miniLinksRef.current = linksSel as unknown as d3.Selection<SVGLineElement, ProcessedLink, SVGGElement, unknown>;
       miniNodesRef.current = nodesSel as unknown as d3.Selection<SVGCircleElement, GraphNode, SVGGElement, unknown>;
       miniViewportRef.current = viewportSel;
 
-      // Initialize Viewport Position immediately
+      // Update Viewport immediately
       const t = zoomTransform.current;
       const containerW = containerRef.current?.clientWidth || 0;
       const containerH = containerRef.current?.clientHeight || 0;
@@ -314,19 +332,17 @@ const MapGraph: React.FC<MapGraphProps> = ({ data, onSelectNode, onSelectLink, s
           const ty = mainH/2 - wy * currentK;
 
           const mainSvg = d3.select(svgRef.current);
-          const zoom = d3.zoom().scaleExtent([0.1, 10]); // Re-create zoom instance not ideal but needed to access transform
-          // Better: just trigger the transition on the main SVG which has zoom behavior attached
-          // We can't access the zoom behavior instance easily unless stored.
-          // However, dispatching a zoom transform is standard.
           
           mainSvg.transition().duration(750)
              // @ts-ignore
              .call(mainSvg.node().__zoomBehavior.transform, d3.zoomIdentity.translate(tx, ty).scale(currentK));
       });
 
-  }, [minimapRef.current, nodes, physicalLinks, worldWidth, worldHeight]); // Re-run when Ref changes (mount/unmount) or data changes
+  }, [minimapRef.current, nodes, physicalLinks, worldWidth, worldHeight]);
 
   // --- 3. Main Graph Simulation & Rendering ---
+  // NOTE: This effect ONLY depends on data/topology. It does NOT depend on selection or mode.
+  // This prevents the graph from restarting simulation when selecting nodes.
   useEffect(() => {
     if (!svgRef.current || !containerRef.current) return;
 
@@ -336,8 +352,7 @@ const MapGraph: React.FC<MapGraphProps> = ({ data, onSelectNode, onSelectLink, s
     // --- SVG Setup ---
     d3.select(svgRef.current).selectAll("*").remove();
     const svg = d3.select(svgRef.current)
-      .attr("viewBox", [0, 0, width, height])
-      .style("cursor", "grab");
+      .attr("viewBox", [0, 0, width, height]);
 
     // Store zoom behavior on element for access in minimap
     const minScale = Math.max(width / worldWidth, height / worldHeight);
@@ -350,7 +365,7 @@ const MapGraph: React.FC<MapGraphProps> = ({ data, onSelectNode, onSelectLink, s
         zoomTransform.current = event.transform;
         g.attr("transform", event.transform);
         
-        // Update Minimap Viewport if it exists
+        // Update Minimap Viewport
         if (miniViewportRef.current) {
             const t = event.transform;
             const scale = minimapScaleRef.current;
@@ -371,28 +386,44 @@ const MapGraph: React.FC<MapGraphProps> = ({ data, onSelectNode, onSelectLink, s
     svg.node().__zoomBehavior = zoom;
 
     const g = svg.append("g").attr("class", "graph-container");
+    gRef.current = g;
 
-    // Boundary
+    // Boundary (Pointer events 'all' to ensure zoom drag works on empty space)
     g.append("rect")
         .attr("x", 0).attr("y", 0)
         .attr("width", worldWidth).attr("height", worldHeight)
         .attr("fill", "#0f172a").attr("stroke", "#334155")
         .attr("stroke-width", 4).attr("stroke-dasharray", "20, 10")
-        .attr("rx", 20).style("pointer-events", "none");
+        .attr("rx", 20)
+        .style("pointer-events", "all"); // Important for zoom
 
-    svg.call(zoom);
+    svg.call(zoom).on("dblclick.zoom", null); // Disable double click zoom
 
-    // Initial positioning
-    const initialScale = minScale; 
-    const initialTx = (width - worldWidth * initialScale) / 2;
-    const initialTy = (height - worldHeight * initialScale) / 2;
-    svg.call(zoom.transform, d3.zoomIdentity.translate(initialTx, initialTy).scale(initialScale));
+    // Restore zoom state or use initial
+    const t = zoomTransform.current;
+    if (t.k === 1 && t.x === 0 && t.y === 0) {
+        const initialScale = minScale; 
+        const initialTx = (width - worldWidth * initialScale) / 2;
+        const initialTy = (height - worldHeight * initialScale) / 2;
+        svg.call(zoom.transform, d3.zoomIdentity.translate(initialTx, initialTy).scale(initialScale));
+    } else {
+        svg.call(zoom.transform, t);
+    }
 
-    const handleBackgroundClick = () => {
+    const handleBackgroundClick = (event: any) => {
+        // Only deselect if it was a genuine click, not the end of a drag
+        if (event.defaultPrevented) return;
+        
+        const isLink = isLinkModeRef.current;
+        if (isLink) {
+            setLinkSourceId(null);
+        }
         onSelectNodeRef.current(null);
         onSelectLinkRef.current(null);
     };
-    svg.on("click", handleBackgroundClick);
+    
+    // Attach to Rect to ensure it captures background clicks within world bounds
+    g.select("rect").on("click", handleBackgroundClick);
 
     // --- Simulation ---
     const simulation = d3.forceSimulation<GraphNode>(nodes)
@@ -401,12 +432,12 @@ const MapGraph: React.FC<MapGraphProps> = ({ data, onSelectNode, onSelectLink, s
       .force("x", d3.forceX<GraphNode>(worldWidth / 2).strength(d => {
           if (d.data.layout?.toLowerCase().includes('center')) { return 0.25; }
           else if (d.data.layout?.toLowerCase().includes('sides')) { return 0; }
-          else { return 0.1; }
+          else { return 0.08; }
       })) 
       .force("y", d3.forceY<GraphNode>(worldHeight / 2).strength(d => {
           if (d.data.layout?.toLowerCase().includes('center')) { return 0.25; }
           else if (d.data.layout?.toLowerCase().includes('sides')) { return 0; }
-          else { return 0.1 }
+          else { return 0.08; }
       }))
       .force("collide", d3.forceCollide<GraphNode>().radius(d => getNodeRadius(d.data.size || 1) + 30)); 
 
@@ -424,21 +455,43 @@ const MapGraph: React.FC<MapGraphProps> = ({ data, onSelectNode, onSelectLink, s
         });
     });
 
+    // --- Temp Line for Linking ---
+    const tempLinkLine = g.append("line")
+        .attr("class", "temp-link-line")
+        .attr("stroke", "#22c55e")
+        .attr("stroke-width", 4)
+        .attr("stroke-dasharray", "10,10")
+        .attr("opacity", 0)
+        .attr("pointer-events", "none");
+
     // --- Draw Main Elements ---
     const linkGroup = g.append("g").attr("class", "links");
     const linkHitAreas = linkGroup.selectAll("path.hit-area").data(physicalLinks).join("path")
       .attr("class", "hit-area").attr("stroke", "transparent").attr("stroke-width", 20).attr("fill", "none")
-      .style("cursor", "pointer").on("click", (event, d) => { event.stopPropagation(); onSelectLinkRef.current(getLinkId(d)); });
+      .style("cursor", "pointer").on("click", (event, d) => { 
+          if(isLinkModeRef.current) return;
+          event.stopPropagation(); 
+          onSelectLinkRef.current(getLinkId(d)); 
+      });
 
     const linkVisible = linkGroup.selectAll("path.visible-link").data(physicalLinks).join("path")
-      .attr("class", "visible-link").attr("stroke", "#475569").attr("stroke-width", d => d.data.road ? 6 : 2)
+      .attr("class", "visible-link")
       .attr("stroke-dasharray", d => d.data.connectionType === 'Proximity' ? "6,6" : "0")
-      .attr("fill", "none").style("cursor", "pointer").on("click", (event, d) => { event.stopPropagation(); onSelectLinkRef.current(getLinkId(d)); });
+      .attr("fill", "none").style("cursor", "pointer")
+      .on("click", (event, d) => { 
+          if(isLinkModeRef.current) return;
+          event.stopPropagation(); 
+          onSelectLinkRef.current(getLinkId(d)); 
+      });
 
     // Link Labels
     const linkLabelGroup = g.append("g").attr("class", "link-labels");
     const linkLabel = linkLabelGroup.selectAll("g").data(physicalLinks).join("g")
-        .style("cursor", "pointer").on("click", (event, d) => { event.stopPropagation(); onSelectLinkRef.current(getLinkId(d)); });
+        .style("cursor", "pointer").on("click", (event, d) => { 
+            if(isLinkModeRef.current) return;
+            event.stopPropagation(); 
+            onSelectLinkRef.current(getLinkId(d)); 
+        });
     
     linkLabel.append("rect").attr("rx", 6).attr("ry", 6).attr("fill", d => getGuardFillColor(d.data.guardValue || 0))
         .attr("stroke", "#0f172a").attr("stroke-width", 2).attr("opacity", 0.9);
@@ -451,12 +504,15 @@ const MapGraph: React.FC<MapGraphProps> = ({ data, onSelectNode, onSelectLink, s
     const portalGroup = g.append("g").attr("class", "portals");
     const portalElements = portalGroup.selectAll("g.portal-connection").data(portalLinks).join("g")
         .attr("class", "portal-connection").style("cursor", "pointer")
-        .on("click", (event, d) => { event.stopPropagation(); onSelectLinkRef.current(getLinkId(d)); });
+        .on("click", (event, d) => { 
+            if(isLinkModeRef.current) return;
+            event.stopPropagation(); 
+            onSelectLinkRef.current(getLinkId(d)); 
+        });
 
     const portalSourceArrow = portalElements.append("g").attr("class", "source-arrow");
     const portalTargetArrow = portalElements.append("g").attr("class", "target-arrow");
 
-    // Helper for Arrows
     const drawArrowWithTail = (selection: d3.Selection<SVGGElement, ProcessedLink, any, any>) => {
         const TAIL_LENGTH = 24; 
         selection.append("path")
@@ -465,8 +521,8 @@ const MapGraph: React.FC<MapGraphProps> = ({ data, onSelectNode, onSelectLink, s
                 if (d.data.road) return `M ${startX} 0 L ${endX} 0`;
                 return `M ${endX} 0 C ${endX + 8} 5, ${startX - 8} -5, ${startX} 0`;
             })
-            .attr("fill", "none").attr("stroke", "#475569").attr("stroke-width", d => d.data.road ? 6 : 2)
-            .attr("stroke-linecap", "round").attr("data-orig-stroke", "#475569");
+            .attr("fill", "none")
+            .attr("stroke-linecap", "round");
 
         selection.append("path").attr("d", "M -6 -6 L 8 0 L -6 6 z") 
             .attr("fill", (d, i) => PORTAL_COLORS[i % PORTAL_COLORS.length])
@@ -488,14 +544,56 @@ const MapGraph: React.FC<MapGraphProps> = ({ data, onSelectNode, onSelectLink, s
 
     // Nodes
     const nodeGroup = g.append("g").attr("class", "nodes");
+    
+    // DRAG BEHAVIOR
     const drag = d3.drag<SVGGElement, GraphNode>()
       .on("start", (event, d) => {
+        // 1. Link Mode Drag Logic (Draw temp line)
+        if (isLinkModeRef.current) {
+            setLinkSourceId(d.id); // Set source
+            tempLinkLine
+                .attr("x1", d.x!)
+                .attr("y1", d.y!)
+                .attr("x2", event.x)
+                .attr("y2", event.y)
+                .attr("opacity", 1);
+            return;
+        }
+        
+        // 2. Normal Mode Drag Logic
         if (!event.active) simulation.alphaTarget(0.3).restart();
         d.fx = d.x; d.fy = d.y;
         svg.style("cursor", "grabbing");
       })
-      .on("drag", (event, d) => { d.fx = event.x; d.fy = event.y; })
+      .on("drag", (event, d) => { 
+          if (isLinkModeRef.current) {
+              // Update temp line end
+              tempLinkLine.attr("x2", event.x).attr("y2", event.y);
+              return;
+          }
+          d.fx = event.x; d.fy = event.y; 
+      })
       .on("end", (event, d) => {
+        if (isLinkModeRef.current) {
+            tempLinkLine.attr("opacity", 0);
+            
+            // Hit Test for Target Node
+            // We use document.elementFromPoint to find if we dropped on another node
+            // Note: coordinates are screen relative, so we use event.sourceEvent
+            const hitEl = document.elementFromPoint(event.sourceEvent.clientX, event.sourceEvent.clientY);
+            const targetNodeGroup = hitEl?.closest(".node-group");
+            
+            if (targetNodeGroup) {
+                // Extract data from D3 binding
+                const targetData = d3.select(targetNodeGroup).datum() as GraphNode;
+                if (targetData && targetData.id !== d.id) {
+                    onAddConnectionRef.current(d.id, targetData.id);
+                    setLinkSourceId(targetData.id); // Chain to next, or null to stop
+                }
+            }
+            return;
+        }
+
         if (!event.active) simulation.alphaTarget(0);
         d.fx = null; d.fy = null;
         svg.style("cursor", "grab");
@@ -503,19 +601,31 @@ const MapGraph: React.FC<MapGraphProps> = ({ data, onSelectNode, onSelectLink, s
       });
 
     const node = nodeGroup.selectAll("g").data(nodes).join("g").attr("class", "node-group")
-      .style("cursor", "pointer").call(drag as any)
-      .on("click", (event, d) => { if (event.defaultPrevented) return; event.stopPropagation(); onSelectNodeRef.current(d.id); });
+      .style("cursor", "pointer")
+      .call(drag as any)
+      .on("click", (event, d) => { 
+          if (event.defaultPrevented) return; 
+          event.stopPropagation(); 
+          
+          const isLink = isLinkModeRef.current;
+          const sourceId = linkSourceIdRef.current;
+
+          if (isLink) {
+              if (sourceId === null) {
+                  setLinkSourceId(d.id);
+              } else if (sourceId !== d.id) {
+                  onAddConnectionRef.current(sourceId, d.id);
+                  setLinkSourceId(d.id); // Chain to next node
+              } else {
+                  setLinkSourceId(null); // Deselect if clicking self
+              }
+          } else {
+              onSelectNodeRef.current(d.id); 
+          }
+      });
 
     node.append("circle").attr("id", d => `node-circle-${d.id}`)
-      .attr("r", d => getNodeRadius(d.data.size || 1)).attr("fill", "#1e293b")
-      .attr("stroke", d => {
-          const value = d.data.guardedContentValue || 0;
-          if (value > 2000000) return "#f59e0b"; 
-          if (value > 800000) return "#94a3b8"; 
-          return "#475569"; 
-      })
-      .attr("stroke-width", d => (d.data.guardedContentValue || 0) > 2000000 ? 4 : 2)
-      .style("filter", d => (d.data.guardedContentValue || 0) > 2000000 ? "drop-shadow(0 0 4px rgba(245, 158, 11, 0.5))" : "none");
+      .attr("r", d => getNodeRadius(d.data.size || 1)).attr("fill", "#1e293b");
 
     node.each(function(d) {
         const el = d3.select(this);
@@ -612,9 +722,8 @@ const MapGraph: React.FC<MapGraphProps> = ({ data, onSelectNode, onSelectLink, s
           tgtGroup.attr("transform", `translate(${tgtArrowX}, ${tgtArrowY}) rotate(${tgtAngle})`);
       });
 
-      // 2. Update Minimap (Using Refs to access latest selections even if re-mounted)
+      // 2. Update Minimap
       const minimapScale = minimapScaleRef.current;
-      
       if (miniNodesRef.current) {
           miniNodesRef.current
             .attr("cx", d => (d.x || 0) * minimapScale)
@@ -632,27 +741,41 @@ const MapGraph: React.FC<MapGraphProps> = ({ data, onSelectNode, onSelectLink, s
     return () => {
       simulation.stop();
     };
-  }, [nodes, physicalLinks, portalLinks, worldWidth, worldHeight]);
+  }, [nodes, physicalLinks, portalLinks, worldWidth, worldHeight]); // Minimal dependencies
 
-  // Handle Selection Styling
+  // --- 4. Styling & Mode Updates (Runs on selection/mode change) ---
   useEffect(() => {
     if (!svgRef.current) return;
     const svg = d3.select(svgRef.current);
     
+    // Update Cursor
+    svg.style("cursor", isLinkMode ? "crosshair" : "grab");
+
+    // Nodes Styling
     svg.selectAll(".node-group circle[id^='node-circle']")
        .attr("stroke", function() {
            const d = d3.select(this).datum() as GraphNode;
            const isRich = (d.data.guardedContentValue || 0) > 2000000;
+           
+           if (isLinkMode && linkSourceId === d.id) return "#22c55e"; // Green for Link Source
            if (d.id === selectedId) return "#fff";
            return isRich ? "#f59e0b" : "#475569";
+       })
+       .attr("stroke-width", function() {
+           const d = d3.select(this).datum() as GraphNode;
+           if (isLinkMode && linkSourceId === d.id) return 4;
+           if (d.id === selectedId) return 3;
+           return (d.data.guardedContentValue || 0) > 2000000 ? 4 : 2;
        })
        .style("filter", function() {
            const d = d3.select(this).datum() as GraphNode;
            const isRich = (d.data.guardedContentValue || 0) > 2000000;
+           if (isLinkMode && linkSourceId === d.id) return "drop-shadow(0 0 8px rgba(34, 197, 94, 0.8))";
            if (d.id === selectedId) return "drop-shadow(0 0 6px rgba(255, 255, 255, 0.8))";
            return isRich ? "drop-shadow(0 0 4px rgba(245, 158, 11, 0.5))" : "none";
        });
 
+    // Links Styling
     svg.selectAll(".visible-link")
         .attr("stroke", function() {
             const d = d3.select(this).datum() as GraphLink;
@@ -686,13 +809,16 @@ const MapGraph: React.FC<MapGraphProps> = ({ data, onSelectNode, onSelectLink, s
                   });
         });
 
-    svg.select(".links").lower();
-    svg.select("rect").lower();       
-    svg.select(".portals").raise();
-    svg.select(".link-labels").raise(); 
-    svg.select(".nodes").raise();       
+    // Z-Indexing
+    if (gRef.current) {
+        gRef.current.select(".links").lower();
+        gRef.current.select("rect").lower();       
+        gRef.current.select(".portals").raise();
+        gRef.current.select(".link-labels").raise(); 
+        gRef.current.select(".nodes").raise();       
+    }
        
-  }, [selectedId, nodes]); 
+  }, [selectedId, nodes, isLinkMode, linkSourceId]); 
 
   return (
     <div ref={containerRef} className="w-full h-full bg-[#0f172a] relative overflow-hidden">
@@ -700,6 +826,37 @@ const MapGraph: React.FC<MapGraphProps> = ({ data, onSelectNode, onSelectLink, s
         <div className="absolute top-4 left-4 z-10 pointer-events-none opacity-50">
             <h2 className="text-4xl font-black text-slate-700 select-none tracking-tighter">RMG EDITOR</h2>
         </div>
+
+        {/* Floating Toolbar */}
+        <div className="absolute top-4 right-4 z-20 flex flex-col gap-2">
+            <button 
+                onClick={onAddZone}
+                className="w-10 h-10 bg-slate-800/90 hover:bg-emerald-600 text-slate-200 hover:text-white rounded-lg border border-slate-700 shadow-lg flex items-center justify-center transition-all group relative"
+                title="Add New Zone"
+            >
+                <PlusCircle size={20} />
+            </button>
+            
+            <button 
+                onClick={() => {
+                    setIsLinkMode(!isLinkMode);
+                    setLinkSourceId(null);
+                }}
+                className={`w-10 h-10 rounded-lg border shadow-lg flex items-center justify-center transition-all ${isLinkMode ? 'bg-amber-600 text-white border-amber-500 ring-2 ring-amber-500/50' : 'bg-slate-800/90 text-slate-200 border-slate-700 hover:bg-slate-700'}`}
+                title={isLinkMode ? "Exit Link Mode" : "Enter Link Mode (Connect Zones)"}
+            >
+                <Network size={20} />
+            </button>
+        </div>
+
+        {/* Mode Indicator */}
+        {isLinkMode && (
+            <div className="absolute top-4 left-1/2 -translate-x-1/2 z-20 bg-amber-600/90 text-white px-4 py-2 rounded-full shadow-lg border border-amber-500/50 animate-in slide-in-from-top-4 fade-in duration-200 pointer-events-none flex items-center gap-2">
+                <MousePointer2 size={16} className="animate-bounce" />
+                <span className="text-xs font-bold">连线模式：点击或拖拽连接两个节点</span>
+            </div>
+        )}
+
       <svg ref={svgRef} className="w-full h-full block"></svg>
     </div>
   );
